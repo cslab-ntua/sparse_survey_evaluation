@@ -214,74 +214,79 @@ int main(int argc, char **argv)
 	}
 	// printf("time coo to csr: %lf\n", time_coo_to_csr);
 
-	_Pragma("omp parallel for")
-	for (long i=0;i<coo_nnz;i++)
-		csr_a[i] = 1.0;
+	if(coo_nnz > 200)
+	{
+		_Pragma("omp parallel for")
+		for (long i=0;i<coo_nnz;i++)
+			csr_a[i] = 1.0;
 
-	time_convert_to_format = time_it(1,
-		MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz);
-	);
-	// printf("time convert to format: %lf\n", time_convert_to_format);
+		time_convert_to_format = time_it(1,
+			MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz);
+		);
+		// printf("time convert to format: %lf\n", time_convert_to_format);
 
-	x = (typeof(x)) aligned_alloc(64, csr_m * k * sizeof(*x));
-	#pragma omp parallel for
-	for(long i=0; i<csr_m * k; ++i)
-		x[i] = 1.0;
-	y = (typeof(y)) aligned_alloc(64, k * csr_n * sizeof(sizeof(*y)));
-	#pragma omp parallel for
-	for(long i=0; i<k * csr_n; i++)
-		y[i] = 1.0;
-	out = (typeof(out)) aligned_alloc(64, csr_nnz * sizeof(sizeof(*out)));
-	#pragma omp parallel for
-	for(long i=0; i<csr_nnz; i++)
-		out[i] = 0.0;
+		x = (typeof(x)) aligned_alloc(64, csr_m * k * sizeof(*x));
+		#pragma omp parallel for
+		for(long i=0; i<csr_m * k; ++i)
+			x[i] = 1.0;
+		y = (typeof(y)) aligned_alloc(64, k * csr_n * sizeof(sizeof(*y)));
+		#pragma omp parallel for
+		for(long i=0; i<k * csr_n; i++)
+			y[i] = 1.0;
+		out = (typeof(out)) aligned_alloc(64, csr_nnz * sizeof(sizeof(*out)));
+		#pragma omp parallel for
+		for(long i=0; i<csr_nnz; i++)
+			out[i] = 0.0;
 
-	// warmup iteration
-	MF->sddmm(x, y, out, k);
-	// printf("---\nout = [ ");
-	// for(int i=0; i<100; i++) printf("%lf ", out[i]);
-	// printf("]\n---\n");
-	double check_acc = CheckAccuracy(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz, k, x, y, out);
+		// warmup iteration
+		MF->sddmm(x, y, out, k);
 
-	if(check_acc < 0.1){
-		const char* system = getenv("SYSTEM");
-		if (system == NULL) {
-			// handle the case where the environment variable is not set
-			fprintf(stderr, "Environment variable SYSTEM not set.\n");
-			exit(EXIT_FAILURE);
-		}
+		// printf("---\nout = [ ");
+		// for(int i=0; i<100; i++) printf("%lf ", out[i]);
+		// printf("]\n---\n");
+		double check_acc = CheckAccuracy(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz, k, x, y, out);
 
-		// if GPU, need to run 1000 iterations more for warmup
-		int gpu_kernel = 0;
-		const char* env_gpu_kernel = getenv("GPU_KERNEL");
-		if (env_gpu_kernel != NULL) {
-			gpu_kernel = atoi(env_gpu_kernel);
-		} else {
-			// handle the case where the environment variable is not set
-			fprintf(stderr, "Environment variable GPU_KERNEL not set.\n");
-			exit(EXIT_FAILURE);
-		}
-		if(gpu_kernel)
-			for(int i=0; i<1000; i++)
-				MF->sddmm(x, y, out, k);
+		if(check_acc < 0.1){
+			const char* system = getenv("SYSTEM");
+			if (system == NULL) {
+				// handle the case where the environment variable is not set
+				fprintf(stderr, "Environment variable SYSTEM not set.\n");
+				exit(EXIT_FAILURE);
+			}
 
-		time_compute = 0;
-		iterations = 128;
-		for(int i=0; i<iterations; i++){
-			time_compute += time_it(1, 
-				MF->sddmm(x, y, out, k);
-			);
-		}
-		double gflops = 2.0 * MF->nnz * k * iterations / time_compute / 1e9;
-		printf("SDDMM kernel - matrix: %s (%ld rows, %ld nnz), read: %.4lf, coo_to_csr: %.4lf, format_conversion: %.4lf, format: %s, k: %d, system: %s, gflops: %.2lf\n", matrix_name, MF->m, MF->nnz, time_read, time_coo_to_csr, time_convert_to_format, MF->format_name, k, system, gflops);
+			// if GPU, need to run 1000 iterations more for warmup
+			int gpu_kernel = 0;
+			const char* env_gpu_kernel = getenv("GPU_KERNEL");
+			if (env_gpu_kernel != NULL) {
+				gpu_kernel = atoi(env_gpu_kernel);
+			} else {
+				// handle the case where the environment variable is not set
+				fprintf(stderr, "Environment variable GPU_KERNEL not set.\n");
+				exit(EXIT_FAILURE);
+			}
+			if(gpu_kernel)
+				for(int i=0; i<1000; i++)
+					MF->sddmm(x, y, out, k);
+
+			time_compute = 0;
+			iterations = 128;
+			for(int i=0; i<iterations; i++){
+				time_compute += time_it(1, 
+					MF->sddmm(x, y, out, k);
+				);
+			}
+			double gflops = 2.0 * MF->nnz * k * iterations / time_compute / 1e9;
+			printf("SDDMM kernel - matrix: %s (%ld rows, %ld cols, %ld nnz), read: %.4lf, coo_to_csr: %.4lf, format_conversion: %.4lf, format: %s, k: %d, system: %s, gflops: %.2lf\n", matrix_name, MF->m, MF->n, MF->nnz, time_read, time_coo_to_csr, time_convert_to_format, MF->format_name, k, system, gflops);
+		}		
+
+		free(x);
+		free(y);
+		free(out);
 	}
 
-	free(x);
-	free(y);
 	free(csr_a);
 	free(csr_ia);
 	free(csr_ja);
-	free(out);
 
 	return 0;
 }

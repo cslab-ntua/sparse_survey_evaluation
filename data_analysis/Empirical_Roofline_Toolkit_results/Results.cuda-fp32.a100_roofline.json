@@ -1,0 +1,60 @@
+{
+   "empirical": {
+      "metadata": {},
+      "gflops": {
+         "data": [
+            [
+               "FP32 GFLOPs",
+               18542.36
+            ]
+         ],
+         "metadata": {
+            "": [
+               "META_DATA",
+               "FLOPS          1024",
+               "GPU_BLOCKS     160",
+               "GPU_THREADS    1024",
+               "ERT_VERSION  1.1.0",
+               "HOSTNAME  ('epyc5.cslab.ece.ntua.gr', ['epyc5'], ['127.0.1.1'])",
+               "UNAME  uname_result(system='Linux', node='epyc5', release='5.10.0-13-amd64', version='#1 SMP Debian 5.10.106-1 (2022-03-17)', machine='x86_64')",
+               "TIMESTAMP_DATA  1749572087.5431945",
+               "CONFIG  {'ERT_RESULTS': ['Results.cuda-fp32.a100'], 'ERT_DRIVER': ['driver1'], 'ERT_KERNEL': ['kernel1'], 'ERT_GPU': ['True'], 'ERT_GPU_CFLAGS': ['-x', 'cu', '-arch=sm_80'], 'ERT_GPU_LDFLAGS': [], 'ERT_FLOPS': ['1024'], 'ERT_ALIGN': ['32'], 'ERT_CC': ['/usr/local/cuda/bin/nvcc'], 'ERT_CFLAGS': ['-O3'], 'ERT_LD': ['/usr/local/cuda/bin/nvcc'], 'ERT_LDFLAGS': [], 'ERT_LDLIBS': [], 'ERT_RUN': ['./ERT_CODE'], 'ERT_PRECISION': ['FP32'], 'ERT_BLOCKS_THREADS': ['163840'], 'ERT_GPU_BLOCKS': ['160,320,640,1280,2560'], 'ERT_GPU_THREADS': ['1024,512,256,128,64'], 'ERT_NUM_EXPERIMENTS': ['1'], 'ERT_MEMORY_MAX': ['1073741824'], 'ERT_WORKING_SET_MIN': ['128'], 'ERT_TRIALS_MIN': ['1'], 'ERT_GNUPLOT': ['gnuplot'], 'ERT_MPI': [False], 'ERT_OPENMP': [False], 'ERT_HIP': [False], 'ERT_OCL': [False], 'ERT_SYCL': [False], 'ERT_WSS_MULT': [1.1]}"
+            ],
+            "TIMESTAMP_DB": 1749572908.8635366
+         }
+      },
+      "gbytes": {
+         "data": [
+            [
+               "L1",
+               2492.78
+            ],
+            [
+               "DRAM",
+               892.51
+            ]
+         ],
+         "metadata": {
+            "": [
+               "FLOPS          1",
+               "GPU_BLOCKS     2560",
+               "GPU_THREADS    64",
+               "ERT_VERSION  1.1.0",
+               "HOSTNAME  ('epyc5.cslab.ece.ntua.gr', ['epyc5'], ['127.0.1.1'])",
+               "UNAME  uname_result(system='Linux', node='epyc5', release='5.10.0-13-amd64', version='#1 SMP Debian 5.10.106-1 (2022-03-17)', machine='x86_64')",
+               "TIMESTAMP_DATA  1749571032.0702736",
+               "CONFIG  {'ERT_RESULTS': ['Results.cuda-fp32.a100'], 'ERT_DRIVER': ['driver1'], 'ERT_KERNEL': ['kernel1'], 'ERT_GPU': ['True'], 'ERT_GPU_CFLAGS': ['-x', 'cu', '-arch=sm_80'], 'ERT_GPU_LDFLAGS': [], 'ERT_FLOPS': ['1,2,64,512'], 'ERT_ALIGN': ['32'], 'ERT_CC': ['/usr/local/cuda/bin/nvcc'], 'ERT_CFLAGS': ['-O3'], 'ERT_LD': ['/usr/local/cuda/bin/nvcc'], 'ERT_LDFLAGS': [], 'ERT_LDLIBS': [], 'ERT_RUN': ['./ERT_CODE'], 'ERT_PRECISION': ['FP32'], 'ERT_BLOCKS_THREADS': ['163840'], 'ERT_GPU_BLOCKS': ['160,320,640,1280,2560'], 'ERT_GPU_THREADS': ['1024,512,256,128,64'], 'ERT_NUM_EXPERIMENTS': ['1'], 'ERT_MEMORY_MAX': ['1073741824'], 'ERT_WORKING_SET_MIN': ['128'], 'ERT_TRIALS_MIN': ['1'], 'ERT_GNUPLOT': ['gnuplot'], 'ERT_MPI': [False], 'ERT_OPENMP': [False], 'ERT_HIP': [False], 'ERT_OCL': [False], 'ERT_SYCL': [False], 'ERT_WSS_MULT': [1.1]}"
+            ],
+            "TIMESTAMP_DB": 1749572908.863716
+         }
+      }
+   },
+   "spec": {
+      "gflops": {
+         "data": []
+      },
+      "gbytes": {
+         "data": []
+      }
+   }
+}
