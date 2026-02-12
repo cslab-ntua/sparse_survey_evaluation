@@ -1100,6 +1100,8 @@ csr_matrix_features_validation(char * title_base, _TYPE_I * row_ptr, _TYPE_I * c
 		fprintf(stderr, "['%s']='", title_base);
 		fprintf(stderr, "%ld ", m);
 		fprintf(stderr, "%ld ", n);
+		fprintf(stderr, "%ld ", nnz);
+		fprintf(stderr, "%.10lf ", 1.0-(double)nnz/(double)(m*n));
 		fprintf(stderr, "%.10lf ", nnz_per_row_avg);
 		fprintf(stderr, "%.10lf ", nnz_per_row_std);
 		fprintf(stderr, "normal ");

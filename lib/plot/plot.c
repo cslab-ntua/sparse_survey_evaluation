@@ -155,6 +155,8 @@ write_image_file(struct Figure * fig, struct Pixel_Array * pa, char * filename)
 	fd = safe_open(f_ppm, O_WRONLY | O_TRUNC | O_CREAT);
 	save_ppm_image(pa, fd);
 	safe_close(fd);
+	snprintf(buf, buf_n, "convert '%s' '%s'", f_ppm, f_conv);
+	ret = system(buf);
 
 	if (system("hash magick"))
 		return;

@@ -39,7 +39,7 @@ struct CSRArrays : Matrix_Format
 	int64_t * row_ptr_64, * col_idx_64;
 	int32_t imsg;
 
-	CSRArrays(INT_T * ia, INT_T * ja, ValueType * a, long m, long n, long nnz) : Matrix_Format(m, n, nnz), ia(ia), ja(ja), a(a)
+	CSRArrays(INT_T * ia, INT_T * ja, ValueType * a, long m, long n, long nnz, int k) : Matrix_Format(m, n, nnz, k), ia(ia), ja(ja), a(a)
 	{
 		imsg = VOP_COPY_RHS | ROP_NOOP | SOP_COPY | VSC_MUL | AOP_ADD;
 		col_idx_64 = (int64_t *)malloc(nnz * sizeof(int64_t));
@@ -80,9 +80,9 @@ CSRArrays::sddmm(ValueType * x, ValueType * y, ValueType * out, int k)
 }
 
 struct Matrix_Format *
-csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz)
+csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz, int k)
 {
-	struct CSRArrays * csr = new CSRArrays(row_ptr, col_ind, values, m, n, nnz);
+	struct CSRArrays * csr = new CSRArrays(row_ptr, col_ind, values, m, n, nnz, k);
 	csr->mem_footprint = nnz * (sizeof(ValueType) + sizeof(INT_T)) + (m+1) * sizeof(INT_T);
 	csr->format_name = (char *) "FusedMM";
 	return csr;

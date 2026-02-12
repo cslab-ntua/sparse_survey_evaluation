@@ -33,7 +33,7 @@ struct CSRArrays : Matrix_Format
 	const sparse_operation_t operation = SPARSE_OPERATION_NON_TRANSPOSE;
 	const sparse_layout_t layout = SPARSE_LAYOUT_ROW_MAJOR;
 
-	CSRArrays(INT_T * ia, INT_T * ja, ValueType * a, long m, long n, long nnz) : Matrix_Format(m, n, nnz), ia(ia), ja(ja), a(a)
+	CSRArrays(INT_T * ia, INT_T * ja, ValueType * a, long m, long n, long nnz, int k) : Matrix_Format(m, n, nnz, k), ia(ia), ja(ja), a(a)
 	{
 		const sparse_index_base_t indexing = SPARSE_INDEX_BASE_ZERO;
 		const sparse_memory_usage_t policy = SPARSE_MEMORY_NONE;
@@ -85,9 +85,9 @@ CSRArrays::sddmm(ValueType * x, ValueType * y, ValueType * out, int k)
 }
 
 struct Matrix_Format *
-csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz)
+csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz, int k)
 {
-	struct CSRArrays * csr = new CSRArrays(row_ptr, col_ind, values, m, n, nnz);
+	struct CSRArrays * csr = new CSRArrays(row_ptr, col_ind, values, m, n, nnz, k);
 	csr->mem_footprint = nnz * (sizeof(ValueType) + sizeof(INT_T)) + (m+1) * sizeof(INT_T);
 	csr->format_name = (char *) "MKL_IE";
 	return csr;

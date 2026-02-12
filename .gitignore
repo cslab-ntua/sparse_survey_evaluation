@@ -5,8 +5,13 @@
 obj/
 deps/libtorch
 out_logs/
+plots/
+matrix_features/figures/
+*.txt
 
 .ipynb*
+kernel_jstream.cpp
+
 
 data_analysis/out_logs/
 data_analysis/plots*/

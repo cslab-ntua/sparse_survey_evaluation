@@ -219,7 +219,7 @@ int main(int argc, char **argv)
 		csr_a[i] = 1.0;
 
 	time_convert_to_format = time_it(1,
-		MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz);
+		MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz, k);
 	);
 	// printf("time convert to format: %lf\n", time_convert_to_format);
 

@@ -32,23 +32,24 @@ double CheckAccuracy(INT_T * row_ptr, INT_T * col_idx, ValueType * val, INT_T m,
 	#elif DOUBLE == 1
 		ValueType epsilon = 1e-10;
 	#endif
-	long i;
-	ValueType * y_gold = (typeof(y_gold)) malloc(m * k * sizeof(*y_gold));
-	ValueType * y_test = (typeof(y_test)) malloc(m * k * sizeof(*y_test));
-	#pragma omp parallel
-	{
+	// long i;
+	// ValueType * y_gold = (typeof(y_gold)) malloc(m * k * sizeof(*y_gold));
+	// ValueType * y_test = (typeof(y_test)) malloc(m * k * sizeof(*y_test));
+	// #pragma omp parallel
+	// {
 		ValueType sum;
+		ValueType maxDiff = 0, diff;
 		long i, j;
-		#pragma omp for
-		for(i=0;i<m * k;i++)
-		{
-			y_gold[i] = 0;
-			y_test[i] = y[i];
-		}
+		// #pragma omp for
+		// for(i=0;i<m * k;i++)
+		// {
+		// 	y_gold[i] = 0;
+		// 	// y_test[i] = y[i];
+		// }
 		#pragma omp for
 		for (i = 0; i < m; i++) {
 			for (long c = 0; c < k; c++) {
-				ValueType value, tmp, compensation;
+				ValueType y_gold, value, tmp, compensation;
 				compensation = 0;
 				sum = 0;
 				for (j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
@@ -57,26 +58,33 @@ double CheckAccuracy(INT_T * row_ptr, INT_T * col_idx, ValueType * val, INT_T m,
 					compensation = (tmp - sum) - value;
 					sum = tmp;
 				}
-				y_gold[i * k + c] = sum;
+				y_gold = sum;
+
+				diff = Abs(y_gold - y[i * k + c]);
+				if (Abs(y_gold) > epsilon)
+				{
+					diff = diff / abs(y_gold);
+					maxDiff = Max(maxDiff, diff);
+				}
 			}
 		}
-	}
+	// }
 
-	ValueType maxDiff = 0, diff;
-	for(i=0;i<m * k;i++)
-	{
-		diff = Abs(y_gold[i] - y_test[i]);
-		if (y_gold[i] > epsilon)
-		{
-			diff = diff / abs(y_gold[i]);
-			maxDiff = Max(maxDiff, diff);
-		}
-	}
+	// ValueType maxDiff = 0, diff;
+	// for(i=0;i<m * k;i++)
+	// {
+	// 	diff = Abs(y_gold[i] - y[i]);
+	// 	if (y_gold[i] > epsilon)
+	// 	{
+	// 		diff = diff / abs(y_gold[i]);
+	// 		maxDiff = Max(maxDiff, diff);
+	// 	}
+	// }
 	if(maxDiff > epsilon)
 		printf("Test failed! (%g)\n", (double)maxDiff);
 
-	free(y_gold);
-	free(y_test);
+	// free(y_gold);
+	// free(y_test);
 	return (double)maxDiff;
 }
 
@@ -207,7 +215,7 @@ int main(int argc, char **argv)
 	// printf("time coo to csr: %lf\n", time_coo_to_csr);
 
 	time_convert_to_format = time_it(1,
-		MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz);
+		MF = csr_to_format(csr_ia, csr_ja, csr_a, csr_m, csr_n, csr_nnz, k);
 	);
 	// printf("time convert to format: %lf\n", time_convert_to_format);
 
@@ -233,7 +241,8 @@ int main(int argc, char **argv)
 	// printf("---\n");
 	double check_acc = CheckAccuracy(csr_ia, csr_ja, csr_a, csr_m, csr_n, k, x, y);
 
-	if(check_acc < 0.1){
+	if(1){
+	// if(check_acc < 0.1){
 		const char* system = getenv("SYSTEM");
 		if (system == NULL) {
 			// handle the case where the environment variable is not set

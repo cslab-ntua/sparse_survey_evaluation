@@ -3,21 +3,49 @@ MODE=server
 
 EXE  = 
 # GPU
-EXE += spmm_cusparse.exe sddmm_cusparse.exe
-EXE += spmm_acc.exe
-EXE += spmm_aspt_gpu.exe sddmm_aspt_gpu.exe
-EXE += spmm_rode.exe sddmm_rode.exe
-EXE += spmm_hc.exe
-EXE += spmm_dgsparse.exe sddmm_dgsparse.exe
-EXE += spmm_gnnpilot.exe sddmm_gnnpilot.exe
-EXE += spmm_dtc.exe
-EXE += spmm_sputnik.exe sddmm_sputnik.exe
+# EXE += spmm_cusparse.exe sddmm_cusparse.exe
+# EXE += spmm_acc.exe
+# EXE += spmm_aspt_gpu.exe sddmm_aspt_gpu.exe
+# EXE += spmm_rode.exe sddmm_rode.exe
+# EXE += spmm_hc.exe
+# EXE += spmm_dgsparse.exe sddmm_dgsparse.exe
+# EXE += spmm_gnnpilot.exe sddmm_gnnpilot.exe
+# EXE += spmm_dtc.exe
+# EXE += spmm_sputnik.exe sddmm_sputnik.exe
 
 # CPU
 EXE += spmm_mkl.exe
+EXE += spmmm_mkl_coo.exe
+EXE += spmm_csr_naive.exe
+EXE += spmm_csr.exe
+EXE += spmm_csr_kahan.exe
+EXE += spmm_csr_simd.exe
+EXE += spmm_csr_prefetch.exe
+EXE += spmm_csr_perfect_nnz_balance.exe
+EXE += spmm_csr_perfect_nnz_balance_prefetch.exe
+EXE += spmm_csr_vector.exe
+EXE += spmm_csr_vector_xrow.exe
+EXE += spmm_csr_vector_xrow_prefetch.exe
+EXE += spmm_csr_vector_perfect_nnz_balance.exe
+EXE += spmm_csc_vector_xrow.exe
+EXE += spmm_csr_vector_xrow_blocked_l1.exe
+EXE += spmm_csr_vector_xrow_blocked_l1_j_stream.exe
+EXE += spmm_coo_vector_xrow_perfect_nnz_balance.exe
+EXE += spmm_coo_vector_xrow_row_split.exe
+EXE += spmm_coo_vector_xrow_atomic.exe
+
+# EXE += spmm_csr_naive_column.exe
+EXE += spmm_csr_column.exe
+EXE += spmm_csr_kahan_column.exe
+EXE += spmm_csr_simd_column.exe
+EXE += spmm_csr_prefetch_column.exe
+# EXE += spmm_csr_vector_column.exe
+EXE += spmm_csr_perfect_nnz_balance_column.exe
+EXE += spmm_csr_perfect_nnz_balance_prefetch_column.exe
+
 EXE += spmm_aocl.exe
 EXE += spmm_aspt_cpu.exe sddmm_aspt_cpu.exe
-EXE += spmm_fusedmm.exe
+# EXE += spmm_fusedmm.exe
 
 
 #####################################################################################################
@@ -312,6 +340,87 @@ sddmm_sputnik.exe: obj/sddmm_bench.o kernel_sputnik.cu $(LIB_OBJ)
 # 	$(CPP) $(CFLAGS) $(CPPFLAGS_MKL) $^ -o $@ $(LDFLAGS) $(LDFLAGS_MKL)
 spmm_mkl.exe: obj/spmm_bench.o kernel_mkl.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) $(CPPFLAGS_MKL) $^ -o $@ $(LDFLAGS) $(LDFLAGS_MKL)
+
+spmmm_mkl_coo.exe: obj/spmm_bench.o kernel_mkl_coo.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) $(CPPFLAGS_MKL) $^ -o $@ $(LDFLAGS) $(LDFLAGS_MKL)
+
+spmm_csr_naive.exe: obj/spmm_bench.o kernel_csr_naive.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
+
+spmm_csr.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'NAIVE' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_kahan.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'KAHAN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_simd.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_SIMD' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_prefetch.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_PREFETCH' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_perfect_nnz_balance_prefetch.exe: obj/spmm_bench.o kernel_csr.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE_PREFETCH' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSR_VEC' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector_xrow.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSR_VEC_XROW' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector_xrow_blocked_l1.exe: obj/spmm_bench.o kernel_csr_vec_k_block_l1.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSR_VEC_XROW_BLOCKED_L1' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector_xrow_blocked_l1_j_stream.exe: obj/spmm_bench.o kernel_csr_vec_k_block_l1_j_stream.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSR_VEC_XROW_BLOCKED_L1_J_STREAM' $^ -o $@ $(LDFLAGS)
+
+spmm_csc_vector_xrow.exe: obj/spmm_bench.o kernel_csc_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSC_VEC_XROW' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector_xrow_prefetch.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_CSR_VEC_XROW_PREFETCH' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_vector_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC' $^ -o $@ $(LDFLAGS)	
+
+spmm_coo_vector_xrow_atomic.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ATOMIC' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_xrow_row_split.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_xrow_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
+############################################################################################
+
+spmm_csr_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'NAIVE_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_kahan_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'KAHAN_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_simd_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_SIMD_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_prefetch_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_PREFETCH_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_perfect_nnz_balance_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE_COLUMN' $^ -o $@ $(LDFLAGS)
+
+spmm_csr_perfect_nnz_balance_prefetch_column.exe: obj/spmm_bench.o kernel_csr_column.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE_PREFETCH_COLUMN' $^ -o $@ $(LDFLAGS)	
+
+
 
 # mat_aocl_spmv.exe: mat_aocl_spmv.cpp $(LIB_OBJ)
 # 	$(CPP) $(CFLAGS) $(CPPFLAGS_AOCL5) $^ -o $@ $(LDFLAGS) $(LDFLAGS_AOCL5)

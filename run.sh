@@ -61,6 +61,24 @@ export OMP_WAIT_POLICY='active'
 # Don't let the runtime deliver fewer threads than those we asked for.
 export OMP_DYNAMIC='false'
 
+# Set cache sizes in bytes per core(L1,L2) for blocking.
+export L1_CACHE_SIZE=$(getconf LEVEL1_DCACHE_SIZE)
+
+export L1_FLOATS=$(( L1_CACHE_SIZE / 4 ))
+
+export L2_CACHE_SIZE=$(getconf LEVEL2_CACHE_SIZE)
+
+export L2_FLOATS=$(( L2_CACHE_SIZE / 4 ))
+
+export L3_CACHE_SIZE=$(getconf LEVEL3_CACHE_SIZE)
+
+export L3_FLOATS=$(( L3_CACHE_SIZE / 4 ))
+
+# Set cache line size in bytes.
+export CACHELINE_SIZE=$(getconf LEVEL1_DCACHE_LINESIZE)
+
+export CACHELINE_FLOATS=$(( CACHELINE_SIZE / 4 ))
+
 # Select the dataset you want to run the benchmarks on.
 # export DATASET='MATRIX_MARKET'
 export DATASET='DLMC'
@@ -168,7 +186,9 @@ elif [ "$DATASET" = "DLMC" ]; then
     for f in "${dlmc_matrices_files[@]}"; do
         mapfile -t dlmc_matrices < "$f"
         for a in "${dlmc_matrices[@]}"; do
+            if [[ "$a" != *"0.5"* ]]; then
             matrices+=("$a")
+            fi
         done
     done
 else
@@ -187,18 +207,45 @@ if [[ "$MODE" == "laptop" ]]; then
 else
     export SYSTEM='AMD-EPYC-24'
 fi
-for k in 16 32 64 128 256 512 1024;
+for k in 8 16 32 64 128 256 512 1024 2048 4096;
 do
     for a in "${matrices[@]}"
     do
         echo '--------'
         echo ${path}/$a
         ./spmm_mkl.exe ${path}/$a $k
-        ./spmm_aocl.exe ${path}/$a $k
-        ./spmm_aspt_cpu.exe ${path}/$a $k
-        ./spmm_fusedmm.exe ${path}/$a $k
+        ./spmmm_mkl_coo.exe ${path}/$a $k
+        # ./spmm_csr_naive.exe ${path}/$a $k
+        # ./spmm_csr.exe ${path}/$a $k
+        # ./spmm_csr_vector.exe ${path}/$a $k
+        ./spmm_csr_vector_xrow.exe ${path}/$a $k
+        # ./spmm_csc_vector_xrow.exe ${path}/$a $k
+        # ./spmm_csr_vector_xrow_blocked_l1.exe ${path}/$a $k
+        # ./spmm_csr_vector_xrow_blocked_l1_j_stream.exe ${path}/$a $k
+        # ./spmm_coo_vector_xrow_atomic.exe ${path}/$a $k
+        ./spmm_coo_vector_xrow_row_split.exe ${path}/$a $k
+        ./spmm_coo_vector_xrow_perfect_nnz_balance.exe ${path}/$a $k
+        # ./spmm_csr_vector_xrow_prefetch.exe ${path}/$a $k
+        # ./spmm_csr_vector_perfect_nnz_balance.exe ${path}/$a $k
+        # ./spmm_csr_vector_perfect_nnz_balance_prefetch.exe ${path}/$a $k
+        # ./spmm_csr_kahan.exe ${path}/$a $k
+        # ./spmm_csr_simd.exe ${path}/$a $k
+        # ./spmm_csr_prefetch.exe ${path}/$a $k
+        # ./spmm_csr_vector.exe ${path}/$a $k
 
-        ./sddmm_aspt_cpu.exe ${path}/$a $k
+        # ./spmm_csr_column.exe ${path}/$a $k
+        # ./spmm_csr_kahan_column.exe ${path}/$a $k
+        # ./spmm_csr_simd_column.exe ${path}/$a $k
+        # ./spmm_csr_prefetch_column.exe ${path}/$a $k
+        # ./spmm_csr_vector_column.exe ${path}/$a $k
+        # ./spmm_csr_vector_perfect_nnz_balance_column.exe ${path}/$a $k
+        # ./spmm_csr_vector_perfect_nnz_balance_prefetch_column.exe ${path}/$a $k
+
+        # ./spmm_aocl.exe ${path}/$a $k
+        # ./spmm_aspt_cpu.exe ${path}/$a $k
+        # ./spmm_fusedmm.exe ${path}/$a $k
+
+        # ./sddmm_aspt_cpu.exe ${path}/$a $k
     done
 done
 
@@ -216,34 +263,34 @@ do
     do
         echo '--------'
         echo ${path}/$a
-        ./spmm_cusparse.exe ${path}/$a $k
-        # ./spmm_acc.exe ${path}/$a $k
-        ./spmm_aspt_gpu.exe ${path}/$a $k
-        ./spmm_rode.exe ${path}/$a $k
-        # ./spmm_hc.exe ${path}/$a $k
-        ./spmm_dgsparse_0.exe ${path}/$a $k # GESPMM_ALG_SEQREDUCE_ROWBALANCE
-        ./spmm_dgsparse_1.exe ${path}/$a $k # GESPMM_ALG_PARREDUCE_ROWBALANCE
-        ./spmm_dgsparse_2.exe ${path}/$a $k # GESPMM_ALG_SEQREDUCE_NNZBALANCE
-        ./spmm_dgsparse_3.exe ${path}/$a $k # GESPMM_ALG_PARREDUCE_NNZBALANCE
-        ./spmm_dgsparse_4.exe ${path}/$a $k # GESPMM_ALG_ROWCACHING_ROWBALANCE
-        ./spmm_dgsparse_5.exe ${path}/$a $k # GESPMM_ALG_ROWCACHING_NNZBALANCE
-        ./spmm_gnnpilot_1.exe ${path}/$a $k # BALANCE=1
-        ./spmm_gnnpilot_2.exe ${path}/$a $k # BALANCE=2
-        ./spmm_dtc_0.exe ${path}/$a $k # float_nonsplit
-        ./spmm_dtc_1.exe ${path}/$a $k # float2_nonsplit
-        ./spmm_dtc_2.exe ${path}/$a $k # float2_split
-        ./spmm_dtc_3.exe ${path}/$a $k # float4_nonsplit
-        ./spmm_dtc_4.exe ${path}/$a $k # float4_split
-        ./spmm_dtc_5.exe ${path}/$a $k # v2 float_nonsplit
-        ./spmm_dtc_6.exe ${path}/$a $k # v2 float4_split
-        ./spmm_sputnik.exe ${path}/$a $k
+        # ./spmm_cusparse.exe ${path}/$a $k
+        # # ./spmm_acc.exe ${path}/$a $k
+        # ./spmm_aspt_gpu.exe ${path}/$a $k
+        # ./spmm_rode.exe ${path}/$a $k
+        # # ./spmm_hc.exe ${path}/$a $k
+        # ./spmm_dgsparse_0.exe ${path}/$a $k # GESPMM_ALG_SEQREDUCE_ROWBALANCE
+        # ./spmm_dgsparse_1.exe ${path}/$a $k # GESPMM_ALG_PARREDUCE_ROWBALANCE
+        # ./spmm_dgsparse_2.exe ${path}/$a $k # GESPMM_ALG_SEQREDUCE_NNZBALANCE
+        # ./spmm_dgsparse_3.exe ${path}/$a $k # GESPMM_ALG_PARREDUCE_NNZBALANCE
+        # ./spmm_dgsparse_4.exe ${path}/$a $k # GESPMM_ALG_ROWCACHING_ROWBALANCE
+        # ./spmm_dgsparse_5.exe ${path}/$a $k # GESPMM_ALG_ROWCACHING_NNZBALANCE
+        # ./spmm_gnnpilot_1.exe ${path}/$a $k # BALANCE=1
+        # ./spmm_gnnpilot_2.exe ${path}/$a $k # BALANCE=2
+        # ./spmm_dtc_0.exe ${path}/$a $k # float_nonsplit
+        # ./spmm_dtc_1.exe ${path}/$a $k # float2_nonsplit
+        # ./spmm_dtc_2.exe ${path}/$a $k # float2_split
+        # ./spmm_dtc_3.exe ${path}/$a $k # float4_nonsplit
+        # ./spmm_dtc_4.exe ${path}/$a $k # float4_split
+        # ./spmm_dtc_5.exe ${path}/$a $k # v2 float_nonsplit
+        # ./spmm_dtc_6.exe ${path}/$a $k # v2 float4_split
+        # ./spmm_sputnik.exe ${path}/$a $k
 
-        ./sddmm_cusparse.exe ${path}/$a $k
-        ./sddmm_aspt_gpu.exe ${path}/$a $k
-        # ./sddmm_rode.exe ${path}/$a $k
-        ./sddmm_dgsparse.exe ${path}/$a $k
-        ./sddmm_gnnpilot.exe ${path}/$a $k
-        # ./sddmm_sputnik.exe ${path}/$a $k
+        # ./sddmm_cusparse.exe ${path}/$a $k
+        # ./sddmm_aspt_gpu.exe ${path}/$a $k
+        # # ./sddmm_rode.exe ${path}/$a $k
+        # ./sddmm_dgsparse.exe ${path}/$a $k
+        # ./sddmm_gnnpilot.exe ${path}/$a $k
+        # # ./sddmm_sputnik.exe ${path}/$a $k
     done
 done
 

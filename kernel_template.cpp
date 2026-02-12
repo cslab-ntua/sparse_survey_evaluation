@@ -22,7 +22,7 @@ struct New_Array : Matrix_Format
 	INT_T * col_ind;      // the colidx of each NNZ (of size nnz)
 	ValueType * values;   // the values (of size NNZ)
 
-	New_Array(INT_T * row_ptr_in, INT_T * col_ind_in, ValueType * values_in, long m, long n, long nnz) : Matrix_Format(m, n, nnz)
+	New_Array(INT_T * row_ptr_in, INT_T * col_ind_in, ValueType * values_in, long m, long n, long nnz, int k) : Matrix_Format(m, n, nnz, k)
 	{
 		row_ptr = (typeof(row_ptr)) aligned_alloc(64, (m+1) * sizeof(*row_ptr));
 		col_ind = (typeof(col_ind)) aligned_alloc(64, nnz * sizeof(*col_ind));
@@ -62,7 +62,7 @@ New_Array::sddmm(ValueType * x, ValueType * y, ValueType * out, int k)
 }
 
 struct Matrix_Format *
-csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz)
+csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long n, long nnz, int k)
 {
 
 }
