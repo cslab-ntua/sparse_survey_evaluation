@@ -15,6 +15,7 @@ kernel_jstream.cpp
 
 data_analysis/out_logs/
 data_analysis/plots*/
+data_analysis/log_file*
 
 NVIDIA-treetrack*/
 nsight-compute-lock
