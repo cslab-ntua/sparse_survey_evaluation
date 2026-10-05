@@ -1040,7 +1040,12 @@ csr_matrix_features_validation(char * title_base, _TYPE_I * row_ptr, _TYPE_I * c
 	double * scatters;
 	double mem_footprint = (nnz * (sizeof(_TYPE_I) + sizeof(_TYPE_V)) + (m + 1) * sizeof(_TYPE_I)) / ((double) 1024 * 1024);
 	double nnz_per_row_min, nnz_per_row_max, nnz_per_row_avg, nnz_per_row_std;
-	double bw_avg;
+	double nnz_per_col_min, nnz_per_col_max, nnz_per_col_avg, nnz_per_col_std;
+	double bw_min, bw_max, bw_avg, bw_std;
+	_TYPE_I * cross;
+	double cross_min, cross_max, cross_avg, cross_std;
+	double * cross_norm;
+	double cross_norm_min, cross_norm_max, cross_norm_avg, cross_norm_std;
 
 	long window_size;
 	_TYPE_I * num_neigh;
@@ -1066,9 +1071,36 @@ csr_matrix_features_validation(char * title_base, _TYPE_I * row_ptr, _TYPE_I * c
 	nnz_per_row_avg = ((double) nnz) / m;
 	array_std(degrees_rows, m, &nnz_per_row_std);
 
+	array_min_max(degrees_cols, n, &nnz_per_col_min, NULL, &nnz_per_col_max, NULL);
+	nnz_per_col_avg = ((double) nnz) / n;
+	array_std(degrees_cols, n, &nnz_per_col_std);
+
+	array_min_max(bandwidths, m, &bw_min, NULL, &bw_max, NULL);
 	array_mean(bandwidths, m, &bw_avg);
+	array_std(bandwidths, m, &bw_std);
+
+	// Cross of each nnz: number of nnz in its row plus number of nnz in its column.
+	cross = (typeof(cross)) malloc(nnz * sizeof(*cross));
+	#pragma omp parallel for
+	for (long j=0;j<nnz;j++)
+		cross[j] = degrees_rows[row_idx[j]] + degrees_cols[col_idx[j]];
+	array_min_max(cross, nnz, &cross_min, NULL, &cross_max, NULL);
+	array_mean(cross, nnz, &cross_avg);
+	array_std(cross, nnz, &cross_std);
+	free(cross);
+
+	// Normalized cross of each nnz: row density (nnz in row / n) plus column density (nnz in column / m).
+	cross_norm = (typeof(cross_norm)) malloc(nnz * sizeof(*cross_norm));
+	#pragma omp parallel for
+	for (long j=0;j<nnz;j++)
+		cross_norm[j] = ((double) degrees_rows[row_idx[j]]) / n + ((double) degrees_cols[col_idx[j]]) / m;
+	array_min_max(cross_norm, nnz, &cross_norm_min, NULL, &cross_norm_max, NULL);
+	array_mean(cross_norm, nnz, &cross_norm_avg);
+	array_std(cross_norm, nnz, &cross_norm_std);
+	free(cross_norm);
 
 	free(degrees_rows);
+	free(degrees_cols);
 	free(bandwidths);
 	free(scatters);
 
@@ -1113,6 +1145,24 @@ csr_matrix_features_validation(char * title_base, _TYPE_I * row_ptr, _TYPE_I * c
 		fprintf(stderr, "14 ");
 		fprintf(stderr, "%s", title_base);
 		fprintf(stderr, "'\n");
+	#endif
+
+	/* CSV line, prefixed with 'CSV_FEATURES,' so it can be grepped from the log.
+	 * Columns: matrix,nr_rows,nr_cols,nr_nzeros,mem_footprint,density,
+	 *          nnz-r-min,nnz-r-max,nnz-r-avg,nnz-r-std,nnz-c-min,nnz-c-max,nnz-c-avg,nnz-c-std,
+	 *          skew_coeff,bw-min,bw-max,bw-avg,bw-std,cross-nnz-min,cross-nnz-max,cross-nnz-avg,cross-nnz-std,
+	 *          cross-norm-min,cross-norm-max,cross-norm-avg,cross-norm-std
+	 * Bandwidths are scaled by the number of columns (as in the rest of the features).
+	 * Values are printed with all their decimals (no rounding, no e-notation), rounding is done when creating the csv.
+	 */
+	#if 1
+		fprintf(stderr, "CSV_FEATURES,%s,%ld,%ld,%ld,%.15lf,%.15lf,", title_base, m, n, nnz, mem_footprint, (double) nnz / ((double) m * n));
+		fprintf(stderr, "%.15lf,%.15lf,%.15lf,%.15lf,", nnz_per_row_min, nnz_per_row_max, nnz_per_row_avg, nnz_per_row_std);
+		fprintf(stderr, "%.15lf,%.15lf,%.15lf,%.15lf,", nnz_per_col_min, nnz_per_col_max, nnz_per_col_avg, nnz_per_col_std);
+		fprintf(stderr, "%.15lf,", (nnz_per_row_max - nnz_per_row_avg) / nnz_per_row_avg);
+		fprintf(stderr, "%.15lf,%.15lf,%.15lf,%.15lf,", bw_min / n, bw_max / n, bw_avg / n, bw_std / n);
+		fprintf(stderr, "%.15lf,%.15lf,%.15lf,%.15lf,", cross_min, cross_max, cross_avg, cross_std);
+		fprintf(stderr, "%.15lf,%.15lf,%.15lf,%.15lf\n", cross_norm_min, cross_norm_max, cross_norm_avg, cross_norm_std);
 	#endif
 
 	free(row_idx);

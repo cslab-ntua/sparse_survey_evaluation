@@ -7,6 +7,7 @@ deps/libtorch
 out_logs/
 plots/
 matrix_features/figures/
+artificial_big_bird_matrix_generator/
 *.txt
 
 .ipynb*
@@ -22,3 +23,5 @@ nsight-compute-lock
 
 matrices/
 matrices_dlmc/
+matrices_masks/
+./claudedeps/libtorch*.zip

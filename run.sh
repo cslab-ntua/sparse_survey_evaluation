@@ -93,15 +93,26 @@ export CACHELINE_SIZE=$(getconf LEVEL1_DCACHE_LINESIZE)
 
 export CACHELINE_FLOATS=$(( CACHELINE_SIZE / 4 ))
 
+# Head-dimension (d) block size for fused_attention_coo_vector_blocking.cpp: how many columns of
+# K/V are touched at a time (by every thread in lockstep) before moving to the next block.
+export ATTENTION_D_BLOCK_SIZE=256
+
+# k-dimension block size for kernel_coo_vec_fixedk_block.cpp: how many columns of x[] every
+# thread works on at once (in lockstep, via a barrier between blocks) before moving to the next
+# block. Must be one of 32/64/128/256.
+export COO_K_BLOCK_SIZE=128
+
 # Select the dataset you want to run the benchmarks on.
-export DATASET='MATRIX_MARKET'
+# export DATASET='MATRIX_MARKET'
 # export DATASET='GRAPH'
 # export DATASET='MASKS'
-# export DATASET='DLMC'
+export DATASET='DLMC'
 
 path_validation='/various/pmpakos/SpMV-Research/validation_matrices'
-# path_validation='./matrices'
-# path_validation='/various/pmpakos/sparse_survey/artificial_big_bird_matrix_generator/matrices'
+
+path_graph='./matrices'
+
+path_masks='/various/pmpakos/sparse_survey/artificial_big_bird_matrix_generator/matrices'
 
 
 path_dlmc='/various/itasou/dlmc'
@@ -290,12 +301,12 @@ if [ "$DATASET" = "MATRIX_MARKET" ]; then
         "${matrices_validation[@]}"
     )
 elif [ "$DATASET" = "GRAPH" ]; then
-    path="$path_validation"
+    path="$path_graph"
     matrices=(
         "${matrices_graph[@]}"
     )
 elif [ "$DATASET" = "MASKS" ]; then
-    path="$path_validation"
+    path="$path_masks"
     matrices=(
         "${matrices_masks[@]}"
     )
@@ -320,7 +331,7 @@ fi
 # time make -j
 export RUNS=2
 # For CPU kernels, no need for 1000 extra iterations for warmup, just change the environment variable
-echo "Running benchmarks on $DATASET dataset for $RUNS runs with APLHA=$ALPHA, BETA=$BETA, CROSS_DISTANCE_LIMIT=$CROSS_DISTANCE_LIMIT, SEED_ROW=$SEED_ROW, CACHE_CAPACITY=$CACHE_CAPACITY, FRONTIER_SIZE=$FRONTIER_SIZE"
+echo "Running benchmarks on $DATASET dataset for $RUNS runs with APLHA=$ALPHA, BETA=$BETA, CROSS_DISTANCE_LIMIT=$CROSS_DISTANCE_LIMIT, SEED_ROW=$SEED_ROW, CACHE_CAPACITY=$CACHE_CAPACITY, FRONTIER_SIZE=$FRONTIER_SIZE, COO_K_BLOCK_SIZE=$COO_K_BLOCK_SIZE, ATTENTION_D_BLOCK_SIZE=$ATTENTION_D_BLOCK_SIZE"
 echo "CPU kernels"
 export GPU_KERNEL=0
 if [[ "$MODE" == "laptop" ]]; then
@@ -331,7 +342,7 @@ fi
 for r in $(seq 1 $RUNS);
 do
     echo "Run $r of $RUNS"
-    for k in 128 256 512; #8 16 32 64 128 256 512 1024 2048 4096;
+    for k in 16 32 64 128 256 512 1024 2048 4096;
     do
         # ./gemm_mkl.exe 1024 1024 1024
         for a in "${matrices[@]}"
@@ -339,7 +350,7 @@ do
             echo '--------'
             echo ${path}/$a
             ./spmm_mkl.exe ${path}/$a $k
-            ./spmm_mkl_colind0.exe ${path}/$a $k
+            # ./spmm_mkl_colind0.exe ${path}/$a $k
             # ./spmmm_mkl_coo.exe ${path}/$a $k
             # ./spmm_csr_naive.exe ${path}/$a $k
             # ./spmm_csr.exe ${path}/$a $k
@@ -351,14 +362,17 @@ do
             # ./spmm_csr_vector_xrow_blocked_l1_j_stream.exe ${path}/$a $k
             # ./spmm_coo_vector_xrow_atomic.exe ${path}/$a $k
             ./spmm_coo_vector_xrow_row_split.exe ${path}/$a $k
-            ./spmm_coo_vector_xrow_colind0.exe ${path}/$a $k
-            ./spmm_coo_vector_z_order.exe ${path}/$a $k
+            ./spmm_coo_vector_row_reg.exe ${path}/$a $k
+            ./spmm_coo_vector_row_reg_fixedk.exe ${path}/$a $k
+            ./spmm_coo_vector_fixedk_block.exe ${path}/$a $k
+            # ./spmm_coo_vector_xrow_colind0.exe ${path}/$a $k
+            # ./spmm_coo_vector_z_order.exe ${path}/$a $k
             # ./spmm_coo_vector_z_order_prefetch.exe ${path}/$a $k
-            ./spmm_coo_vector_hilbert.exe ${path}/$a $k
-            ./spmm_coo_vector_cross.exe ${path}/$a $k
-            ./spmm_coo_vector_frontier.exe ${path}/$a $k
-            ./spmm_coo_vector_frontier_ringbuffer.exe ${path}/$a $k
-            ./spmm_coo_vector_frontier_ringbuffer_roulette.exe ${path}/$a $k
+            # ./spmm_coo_vector_hilbert.exe ${path}/$a $k
+            # ./spmm_coo_vector_cross.exe ${path}/$a $k
+            # ./spmm_coo_vector_frontier.exe ${path}/$a $k
+            # ./spmm_coo_vector_frontier_ringbuffer.exe ${path}/$a $k
+            # ./spmm_coo_vector_frontier_ringbuffer_roulette.exe ${path}/$a $k
             # ./spmm_coo_vector_frontier_ringbuffer_all_seed.exe ${path}/$a $k
             # ./spmm_coo_vector_rcm.exe ${path}/$a $k
             # ./spmm_coo_vector_z_order_new.exe ${path}/$a $k
@@ -379,11 +393,14 @@ do
             # ./spmm_csr_vector_perfect_nnz_balance_column.exe ${path}/$a $k
             # ./spmm_csr_vector_perfect_nnz_balance_prefetch_column.exe ${path}/$a $k
 
-            ./spmm_aocl.exe ${path}/$a $k
+            # ./spmm_aocl.exe ${path}/$a $k
             # ./spmm_aspt_cpu.exe ${path}/$a $k
-            # ./spmm_fusedmm.exe ${path}/$a $k
+            ./spmm_fusedmm.exe ${path}/$a $k
 
             # ./sddmm_aspt_cpu.exe ${path}/$a $k
+            # ./attention_coo_vector_row_split.exe ${path}/$a $k
+            # ./attention_coo_vector_row_split_blocking.exe ${path}/$a $k
+            # ./attention_coo_vector_row_split_blocking.exe ${path}/$a $k
         done
     done
 done

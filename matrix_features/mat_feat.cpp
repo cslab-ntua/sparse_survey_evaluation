@@ -71,7 +71,7 @@ int main(int argc, char **argv)
 	file_fig = strdup(buf);
 
 	printf("Matrix: %s\n", file_in);
-    if (strcmp(dataset, "MATRIX_MARKET") == 0) {
+    if (strcmp(dataset, "MATRIX_MARKET") == 0 || strcmp(dataset, "GRAPH") == 0 || strcmp(dataset, "MASKS") == 0) {
 		time_read = time_it(1,
 			long expand_symmetry = 1;
 			long pattern_dummy_vals = 1;
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
 			free(mtx_colind);
 			free(mtx_val);
 		);
-	} else if (strcmp(dataset, "DLMC") == 0 || strcmp(dataset, "GRAPH") == 0 || strcmp(dataset, "MASKS") == 0) {
+	} else if (strcmp(dataset, "DLMC") == 0 ) {
 		printf("Reading DLMC matrix...\n");
 		time_read = time_it(1,
 			long expand_symmetry = 1;

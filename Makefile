@@ -33,6 +33,9 @@ EXE += spmm_csr_vector_xrow_blocked_l1.exe
 EXE += spmm_csr_vector_xrow_blocked_l1_j_stream.exe
 EXE += spmm_coo_vector_xrow_perfect_nnz_balance.exe
 EXE += spmm_coo_vector_xrow_row_split.exe
+EXE += spmm_coo_vector_row_reg.exe
+EXE += spmm_coo_vector_row_reg_fixedk.exe
+EXE += spmm_coo_vector_fixedk_block.exe
 EXE += spmm_coo_vector_xrow_atomic.exe
 EXE += spmm_coo_vector_xrow_colind0.exe
 EXE += spmm_coo_vector_z_order.exe
@@ -45,6 +48,8 @@ EXE += spmm_coo_vector_frontier_ringbuffer.exe
 EXE += spmm_coo_vector_frontier_ringbuffer_all_seed.exe
 EXE += spmm_coo_vector_frontier_ringbuffer_roulette.exe
 EXE += spmm_coo_vector_rcm.exe
+EXE += attention_coo_vector_row_split.exe
+EXE += attention_coo_vector_row_split_blocking.exe
 EXE += gemm_mkl.exe
 # EXE += spmm_csr_naive_column.exe
 EXE += spmm_csr_column.exe
@@ -57,7 +62,7 @@ EXE += spmm_csr_perfect_nnz_balance_prefetch_column.exe
 
 EXE += spmm_aocl.exe
 EXE += spmm_aspt_cpu.exe sddmm_aspt_cpu.exe
-# EXE += spmm_fusedmm.exe
+EXE += spmm_fusedmm.exe
 
 
 #####################################################################################################
@@ -411,6 +416,15 @@ spmm_coo_vector_xrow_atomic.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
 spmm_coo_vector_xrow_row_split.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
 
+spmm_coo_vector_row_reg.exe: obj/spmm_bench.o kernel_coo_vec_row_reg.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_row_reg_fixedk.exe: obj/spmm_bench.o kernel_coo_vec_row_reg_fixedk.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_block.exe: obj/spmm_bench.o kernel_coo_vec_fixedk_block.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
+
 spmm_coo_vector_xrow_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
 
@@ -443,6 +457,12 @@ spmm_coo_vector_frontier_ringbuffer_roulette.exe: obj/spmm_bench.o kernel_coo_ve
 
 spmm_coo_vector_rcm.exe: obj/spmm_bench.o kernel_coo_rcm.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_RCM' $^ -o $@ $(LDFLAGS)
+
+attention_coo_vector_row_split.exe: obj/attention_bench.o fused_attention_coo_vector.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
+
+attention_coo_vector_row_split_blocking.exe: obj/attention_bench.o fused_attention_coo_vector_blocking.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
 
 gemm_mkl.exe: gemm_mkl.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) $(CPPFLAGS_MKL) $^ -o $@ $(LDFLAGS) $(LDFLAGS_MKL)
@@ -500,6 +520,8 @@ spmm_fusedmm.exe: obj/spmm_bench.o kernel_fusedmm.cpp $(LIB_OBJ)
 $(call Rule_Auto_Dependencies,obj/spmm_bench.o,spmm_bench.cpp,$(CFLAGS))
 	$(CPP) $(CFLAGS) -c $< -o $@
 $(call Rule_Auto_Dependencies,obj/sddmm_bench.o,sddmm_bench.cpp,$(CFLAGS))
+	$(CPP) $(CFLAGS) -c $< -o $@
+$(call Rule_Auto_Dependencies,obj/attention_bench.o,attention_bench.cpp,$(CFLAGS))
 	$(CPP) $(CFLAGS) -c $< -o $@
 
 $(call Rule_Auto_Dependencies,obj/pthread_functions.o,$(library)/pthread_functions.c,$(CFLAGS))
