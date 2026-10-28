@@ -24,4 +24,15 @@ nsight-compute-lock
 matrices/
 matrices_dlmc/
 matrices_masks/
-./claudedeps/libtorch*.zip
+./claude
+deps/libtorch*.zip
+
+# test scripts and results from the COO refactor
+diag_*.sh
+diag_*.txt
+asm_*.txt
+test.txt
+overnight.sh
+overnight_*/
+
+
