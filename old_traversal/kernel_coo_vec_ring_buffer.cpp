@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <omp.h>
 #include <vector>
 #include <algorithm>
@@ -139,6 +140,16 @@ struct COOArrays : Matrix_Format
         );
         // printf("COO Vector Cross Preprocessing: Seed Rows=%d, Distance Limit=%d, Cache Capacity=%d, Alpha=%f, Beta=%f\n", row_seed, cross_distance_limit, cache_capacity, alpha, beta);
         this->preprocess_frontier_ringbuffer(row_seed, cross_distance_limit, frontier_size, cache_capacity, alpha, beta);
+
+        // Diagnostic (added for the kernel_coo.cpp port check): hash of the final non-zero order, same as in kernel_coo.cpp.
+        if (getenv("COO_PRINT_ORDER_HASH") != NULL && atoi(getenv("COO_PRINT_ORDER_HASH"))) {
+            uint64_t h = 1469598103934665603ULL;
+            for (long j = 0; j < nnz; j++) {
+                h = (h ^ (uint32_t) row_ind[j]) * 1099511628211ULL;
+                h = (h ^ (uint32_t) col_ind[j]) * 1099511628211ULL;
+            }
+            printf("ORDER_HASH %016llx\n", (unsigned long long) h);
+        }
 
         #ifdef PRINT_STATISTICS
             long i;

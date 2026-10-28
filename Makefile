@@ -40,14 +40,21 @@ EXE += spmm_coo_vector_xrow_atomic.exe
 EXE += spmm_coo_vector_xrow_colind0.exe
 EXE += spmm_coo_vector_z_order.exe
 EXE += spmm_coo_vector_z_order_prefetch.exe
-EXE += spmm_coo_vector_z_order_new.exe
+EXE += spmm_coo_vector_fixedk_z_order.exe
 EXE += spmm_coo_vector_hilbert.exe
+EXE += spmm_coo_vector_fixedk_hilbert.exe
 EXE += spmm_coo_vector_cross.exe
+EXE += spmm_coo_vector_fixedk_cross.exe
 EXE += spmm_coo_vector_frontier.exe
+EXE += spmm_coo_vector_fixedk_frontier.exe
 EXE += spmm_coo_vector_frontier_ringbuffer.exe
 EXE += spmm_coo_vector_frontier_ringbuffer_all_seed.exe
 EXE += spmm_coo_vector_frontier_ringbuffer_roulette.exe
+EXE += spmm_coo_vector_fixedk_frontier_ringbuffer.exe
+EXE += spmm_coo_vector_fixedk_frontier_ringbuffer_all_seed.exe
+EXE += spmm_coo_vector_fixedk_frontier_ringbuffer_roulette.exe
 EXE += spmm_coo_vector_rcm.exe
+EXE += spmm_coo_vector_fixedk_rcm.exe
 EXE += attention_coo_vector_row_split.exe
 EXE += attention_coo_vector_row_split_blocking.exe
 EXE += gemm_mkl.exe
@@ -136,6 +143,10 @@ endif
 # CFLAGS += -O0
 # CFLAGS += -O2
 CFLAGS += -O3
+# Align every loop to 64 bytes. With gcc's default (loose 16-byte) alignment, a hot inner loop can end up straddling a
+# 64-byte fetch boundary depending on unrelated code before it, which cost the COO row_split kernel 9..34% at k >= 256
+# on AMD EPYC (measured 2026-10-13, diag_order.sh). Applied to all kernels so they are built the same way.
+CFLAGS += -falign-loops=64
 
 # CFLAGS += -ffast-math
 
@@ -407,56 +418,197 @@ spmm_csr_vector_xrow_prefetch.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ
 spmm_csr_vector_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_csr_vec.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_VECTOR_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_xrow_colind0.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_XROW_COLIND0' $^ -o $@ $(LDFLAGS)	
+# Vectorized COO SpMM: one source (kernel_coo.cpp) + base kernel / reordering headers, selected with -D flags.
+# See the "Variant selection" comment at the top of kernel_coo.cpp.
+COO_HDRS = $(wildcard coo_base_*.h coo_reorder_*.h)
 
-spmm_coo_vector_xrow_atomic.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ATOMIC' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_xrow_colind0.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_XROW_COLIND0' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_xrow_row_split.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_xrow_atomic.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ATOMIC' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_xrow_row_split.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_xrow_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_PERFECT_NNZ_BALANCE' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_row_reg_fixedk.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# fixedk with another k-slice size S (step 2, 2026-10-27): every row processed in slices of S columns (S/8
+# accumulators). The default (all fixedk exes) is S = 128; slice0 = no slicing (per-k kernels + generic path).
+spmm_coo_vector_row_reg_fixedk_slice%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE=$*' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order_slice%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE=$*' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# fixedk with outer slicing (2026-10-27): all runs of a thread for columns [0, W), then [W, 2W), ... (cache blocking
+# of x in k; W a multiple of 8). Not in EXE.
+spmm_coo_vector_row_reg_fixedk_outer%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_rcm_outer%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' -D'COO_REORDER_RCM' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order_outer%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# outer slicing with packing (2026-10-28): every strip of x copied into a contiguous n x W buffer first, so the strip
+# isn't spread over a few cache sets for power-of-two k. pack<W> = outer slicing with strip width W. Not in EXE.
+spmm_coo_vector_row_reg_fixedk_pack%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER_PACK' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_rcm_pack%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER_PACK' -D'COO_REORDER_RCM' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order_pack%.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER=$*' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_SLICE_OUTER_PACK' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# fixedk with the previous run detection (row_ind scanned in the timed loop), for comparison with the default
+# (run boundaries precomputed once). Not in EXE.
+spmm_coo_vector_row_reg_fixedk_runscan.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_RUN_SCAN' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# fixedk forced to ACCUMULATE mode on row-sorted input: measures the cost of y += acc vs y = acc.
+spmm_coo_vector_fixedk_accum.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_ACCUMULATE' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# RCM relabeling. By default x / y are permuted only on the first (checked) call, outside the timed iterations;
+# the _permxy variant permutes on every call, like the old kernel_coo_rcm.cpp.
+spmm_coo_vector_rcm.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_RCM' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_rcm_permxy.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_RCM' -D'CUSTOM_COO_VEC_RCM_PERMUTE_IN_TIMING' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_rcm.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_RCM' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_rcm_permxy.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_RCM' -D'CUSTOM_COO_VEC_RCM_PERMUTE_IN_TIMING' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Z-order inside each thread segment (rows split into several runs, so fixedk runs in ACCUMULATE mode).
+spmm_coo_vector_z_order.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_z_order_prefetch.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_PREFETCH' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Hilbert curve order inside each thread segment (rows split into several runs, so fixedk runs in ACCUMULATE mode).
+spmm_coo_vector_hilbert.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_HILBERT' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_hilbert.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_HILBERT' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Greedy row / column "cross" walk inside each thread segment (SEED_ROW, CROSS_DISTANCE_LIMIT, CACHE_CAPACITY env).
+spmm_coo_vector_cross.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_CROSS' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_cross.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_CROSS' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Greedy scored-frontier walk inside each thread segment (SEED_ROW, FRONTIER_SIZE, CACHE_CAPACITY, ALPHA, BETA env).
+spmm_coo_vector_frontier.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_FRONTIER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_frontier.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_FRONTIER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Reference builds of the replaced files in old_traversal/, to check kernel_coo.cpp against them. Not in EXE.
+spmm_coo_vector_xrow_row_split_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)
+
+
+spmm_coo_vector_frontier_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec_frontier.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_hilbert_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_hilbert.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_HILBERT' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_cross_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec_cross.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_CROSS' $^ -o $@ $(LDFLAGS)
+
+# Prefetch experiments (not in EXE). _prefetch: first cache line of each row, _prefetch_row: every cache line of the row.
+spmm_coo_vector_xrow_row_split_prefetch.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_PREFETCH' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_xrow_row_split_prefetch_row.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_PREFETCH' -D'CUSTOM_COO_VEC_PREFETCH_FULL_ROW' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_z_order_prefetch_row.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_PREFETCH' -D'CUSTOM_COO_VEC_PREFETCH_FULL_ROW' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_prefetch.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_PREFETCH' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_prefetch_row.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_PREFETCH' -D'CUSTOM_COO_VEC_PREFETCH_FULL_ROW' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order_prefetch_row.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_PREFETCH' -D'CUSTOM_COO_VEC_PREFETCH_FULL_ROW' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+# Zeroing experiments (not in EXE). _zero_static: all of y zeroed by one static (row-balanced) loop (kept for the
+# later nnz + rows partition work). _zero_all: fixedk with the previous zeroing (whole thread row range zeroed,
+# ACCUMULATE adds every run), to compare with the default (only empty rows zeroed, first run of each row stores).
+spmm_coo_vector_xrow_row_split_zero_static.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'CUSTOM_COO_VEC_ZERO_STATIC' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_row_reg_fixedk_zero_static.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ZERO_STATIC' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_row_reg_fixedk_zero_all.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_ZERO_ALL' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_z_order_zero_all.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_ZERO_ALL' -D'COO_REORDER_Z_ORDER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+
+spmm_coo_vector_fixedk_accum_zero_all.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_ACCUMULATE' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK_ZERO_ALL' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
 spmm_coo_vector_row_reg.exe: obj/spmm_bench.o kernel_coo_vec_row_reg.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
-
-spmm_coo_vector_row_reg_fixedk.exe: obj/spmm_bench.o kernel_coo_vec_row_reg_fixedk.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
 
 spmm_coo_vector_fixedk_block.exe: obj/spmm_bench.o kernel_coo_vec_fixedk_block.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_xrow_perfect_nnz_balance.exe: obj/spmm_bench.o kernel_coo_vec.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_PERFECT_NNZ_BALANCE' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_z_order.exe: obj/spmm_bench.o kernel_coo_z_order.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_Z_ORDER' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_z_order_prefetch.exe: obj/spmm_bench.o kernel_coo_z_order.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_Z_ORDER_PREFETCH' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_z_order_new.exe: obj/spmm_bench.o kernel_coo_z_order_new.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_Z_ORDER_NEW' $^ -o $@ $(LDFLAGS)
+# Frontier walk with a ring-buffer cache model, 3 variants (SEED_ROW, FRONTIER_SIZE, CACHE_CAPACITY, ALPHA, BETA env).
+spmm_coo_vector_frontier_ringbuffer.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_RINGBUFFER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_hilbert.exe: obj/spmm_bench.o kernel_coo_hilbert.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_HILBERT' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_frontier_ringbuffer_all_seed.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_RINGBUFFER_ALL_SEED' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_cross.exe: obj/spmm_bench.o kernel_coo_vec_cross.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_CROSS' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_frontier_ringbuffer_roulette.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' -D'COO_REORDER_RINGBUFFER_ROULETTE' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_frontier.exe: obj/spmm_bench.o kernel_coo_vec_frontier.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_fixedk_frontier_ringbuffer.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_RINGBUFFER' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_frontier_ringbuffer.exe: obj/spmm_bench.o kernel_coo_vec_ring_buffer.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_fixedk_frontier_ringbuffer_all_seed.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_RINGBUFFER_ALL_SEED' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_frontier_ringbuffer_all_seed.exe: obj/spmm_bench.o kernel_coo_vec_ring_buffer_all_seed.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ALL_SEED' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_fixedk_frontier_ringbuffer_roulette.exe: obj/spmm_bench.o kernel_coo.cpp $(COO_HDRS) $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_ROW_REG_FIXEDK' -D'COO_REORDER_RINGBUFFER_ROULETTE' $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-spmm_coo_vector_frontier_ringbuffer_roulette.exe: obj/spmm_bench.o kernel_coo_vec_ring_buffer_roulette.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ROULETTE' $^ -o $@ $(LDFLAGS)
+# Reference builds of the replaced ring-buffer files in old_traversal/. Not in EXE.
+spmm_coo_vector_frontier_ringbuffer_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec_ring_buffer.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER' $^ -o $@ $(LDFLAGS)
 
-spmm_coo_vector_rcm.exe: obj/spmm_bench.o kernel_coo_rcm.cpp $(LIB_OBJ)
-	$(CPP) $(CFLAGS) -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_RCM' $^ -o $@ $(LDFLAGS)
+spmm_coo_vector_frontier_ringbuffer_all_seed_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec_ring_buffer_all_seed.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ALL_SEED' $^ -o $@ $(LDFLAGS)
+
+spmm_coo_vector_frontier_ringbuffer_roulette_old.exe: obj/spmm_bench.o old_traversal/kernel_coo_vec_ring_buffer_roulette.cpp $(LIB_OBJ)
+	$(CPP) $(CFLAGS) -I'.' -D'SPMM_KERNEL' -D'CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ROULETTE' $^ -o $@ $(LDFLAGS)
 
 attention_coo_vector_row_split.exe: obj/attention_bench.o fused_attention_coo_vector.cpp $(LIB_OBJ)
 	$(CPP) $(CFLAGS) -D'CUSTOM_COO_VEC_XROW_ROW_SPLIT' $^ -o $@ $(LDFLAGS)

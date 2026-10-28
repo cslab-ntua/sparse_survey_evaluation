@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <omp.h>
 #include <vector>
 #include <algorithm>
@@ -43,11 +44,6 @@ INT_T * thread_j_s = NULL;
 INT_T * thread_j_e = NULL;
 
 ValueType * thread_v_e = NULL;
-
-long * thread_hit_both = NULL;
-long * thread_hit_row_only = NULL;
-long * thread_hit_col_only = NULL;
-long * thread_hit_none = NULL;
 
 double * thread_time_compute, * thread_time_barrier;
 
@@ -99,11 +95,7 @@ struct COOArrays : Matrix_Format
         thread_j_s = (INT_T *) malloc(num_threads * sizeof(*thread_j_s));
         thread_j_e = (INT_T *) malloc(num_threads * sizeof(*thread_j_e));
         thread_v_e = (ValueType *) malloc(num_threads * k * sizeof(*thread_v_e));
-        thread_hit_both = (long *) malloc(num_threads * sizeof(*thread_hit_both));
-        thread_hit_row_only = (long *) calloc(num_threads, sizeof(*thread_hit_row_only));
-        thread_hit_col_only = (long *) calloc(num_threads, sizeof(*thread_hit_col_only));
-        thread_hit_none = (long *) malloc(num_threads * sizeof(*thread_hit_none));
-
+        
         time_balance = time_it(1,
             _Pragma("omp parallel")
             {
@@ -111,7 +103,7 @@ struct COOArrays : Matrix_Format
                 int tnum = omp_get_thread_num();
                 loop_partitioner_balance_iterations(num_threads, tnum, 0, nnz, &thread_j_s[tnum], &thread_j_e[tnum]);
 
-                #ifdef CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ROULETTE
+                #ifdef CUSTOM_COO_VEC_FRONTIER
                     if (tnum > 0 && thread_j_s[tnum] < nnz) {
                         while(thread_j_s[tnum] < nnz && row_ind[thread_j_s[tnum]] == row_ind[thread_j_s[tnum] - 1]) {
                             thread_j_s[tnum]++;
@@ -138,34 +130,27 @@ struct COOArrays : Matrix_Format
             }
         );
         // printf("COO Vector Cross Preprocessing: Seed Rows=%d, Distance Limit=%d, Cache Capacity=%d, Alpha=%f, Beta=%f\n", row_seed, cross_distance_limit, cache_capacity, alpha, beta);
-        this->preprocess_frontier_ringbuffer(row_seed, cross_distance_limit, frontier_size, cache_capacity, alpha, beta);
+        this->preprocess_frontier(row_seed, cross_distance_limit, frontier_size, cache_capacity, alpha, beta);
+
+        // Diagnostic (added for the kernel_coo.cpp port check): hash of the final non-zero order, same as in kernel_coo.cpp.
+        if (getenv("COO_PRINT_ORDER_HASH") != NULL && atoi(getenv("COO_PRINT_ORDER_HASH"))) {
+            uint64_t h = 1469598103934665603ULL;
+            for (long j = 0; j < nnz; j++) {
+                h = (h ^ (uint32_t) row_ind[j]) * 1099511628211ULL;
+                h = (h ^ (uint32_t) col_ind[j]) * 1099511628211ULL;
+            }
+            printf("ORDER_HASH %016llx\n", (unsigned long long) h);
+        }
 
         #ifdef PRINT_STATISTICS
             long i;
             num_loops = 0;
             thread_time_barrier = (double *) malloc(num_threads * sizeof(*thread_time_barrier));
             thread_time_compute = (double *) malloc(num_threads * sizeof(*thread_time_compute));
-            
-            long total_both = 0, total_row = 0, total_col = 0, total_none = 0;
-
             for (i=0;i<num_threads;i++)
             {
-                // printf("Thread %ld: nnz range [%d, %d) nnz: %ld of nnz_total: %ld\n", i, thread_j_s[i], thread_j_e[i], thread_j_e[i] - thread_j_s[i], nnz);
-                // printf("          -> Hits (Both): %ld, (Row Only): %ld, (Col Only): %ld, (None): %ld\n", 
-                //        thread_hit_both[i], thread_hit_row_only[i], thread_hit_col_only[i], thread_hit_none[i]);
-                
-                total_both += thread_hit_both[i];
-                total_row += thread_hit_row_only[i];
-                total_col += thread_hit_col_only[i];
-                total_none += thread_hit_none[i];
+                printf("Thread %ld: nnz range [%d, %d) nnz: %ld of nnz_total: %ld\n", i, thread_j_s[i], thread_j_e[i], thread_j_e[i] - thread_j_s[i], nnz);
             }
-            printf("====================================================\n");
-            printf("TOTAL MATRIX CACHE STATS:\n");
-            printf("  Both:     %ld %f%%\n", total_both, (double)total_both / (double)nnz *100);
-            printf("  Row Only: %ld %f%%\n", total_row, (double)total_row / (double)nnz *100);
-            printf("  Col Only: %ld %f%%\n", total_col, (double)total_col / (double)nnz *100);
-            printf("  None:     %ld %f%%\n", total_none, (double)total_none / (double)nnz *100);
-            printf("====================================================\n");
         #endif
     }
 
@@ -176,19 +161,14 @@ struct COOArrays : Matrix_Format
         free(col_ind);
         free(thread_j_s);
         free(thread_j_e);
-        free(thread_v_e);
 
         #ifdef PRINT_STATISTICS
             free(thread_time_barrier);
             free(thread_time_compute);
-            free(thread_hit_both);
-            free(thread_hit_row_only);
-            free(thread_hit_col_only);
-            free(thread_hit_none);
         #endif
     }
 
-    void preprocess_frontier_ringbuffer(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta);
+    void preprocess_frontier(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta);
     void spmm(ValueType * x, ValueType * y, int k);
     void sddmm(ValueType * x, ValueType * y, ValueType * out, int k);
     void statistics_start();
@@ -200,7 +180,7 @@ void compute_coo_vector_xrow(COOArrays * restrict coo, ValueType * restrict x , 
 void compute_coo_vector_xrow_perfect_nnz_balance(COOArrays * restrict coo, ValueType * restrict x , ValueType * restrict y, int k);
 void compute_coo_sddmm(COOArrays * restrict coo, ValueType * restrict x, ValueType * restrict y, ValueType * restrict out, int k);
 
-void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta) 
+void COOArrays::preprocess_frontier(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta) 
 {
     #pragma omp parallel
     {
@@ -209,141 +189,146 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
         long j_e = thread_j_e[tnum];
         long local_nnz = j_e - j_s;
 
-        #ifdef PRINT_STATISTICS
-            long local_hit_both = 0;
-            long local_hit_row_only = 0;
-            long local_hit_col_only = 0;
-            long local_hit_none = 0;
-        #endif
-
         // if (local_nnz <= 0) return;
 
-        // Thread-local random number generator for our stochastic roulette
-        unsigned int seed_rng = tnum ^ 0x12345678;
-
-        // ---------------------------------------------------------
         // 1. Build local adjacency lists and degree counters
-        // ---------------------------------------------------------
         std::unordered_map<long, std::vector<long>> row_nnzs_set;
         std::unordered_map<long, std::vector<long>> col_nnzs_set;
-        std::vector<int> row_count(this->m, 0); 
-        std::vector<int> col_count(this->n, 0);
+        std::unordered_map<long, int> row_count;
+        std::unordered_map<long, int> col_count;
 
         for (long j = j_s; j < j_e; j++) {
-            long r = row_ind[j];
-            long c = col_ind[j];
-            row_nnzs_set[r].push_back(j);
-            col_nnzs_set[c].push_back(j);
-            row_count[r]++;
-            col_count[c]++;
+            row_nnzs_set[row_ind[j]].push_back(j);
+            col_nnzs_set[col_ind[j]].push_back(j);
+            row_count[row_ind[j]]++;
+            col_count[col_ind[j]]++;
         }
 
-        // 2. Find Seeds 
-        std::vector<std::pair<long, int>> pop_rows;
-        for (long i = 0; i < this->m; i++) {
-            if (row_count[i] > 0) pop_rows.push_back({i, row_count[i]});
-        }
-        std::sort(pop_rows.begin(), pop_rows.end(), 
-            [](const std::pair<long, int>& a, const std::pair<long, int>& b) { return a.second > b.second; });
+        // 2. Find the 'r_first_rows' most populated rows (Seeds)
+        std::vector<std::pair<long, int>> row_count_vector(row_count.begin(), row_count.end());
+        std::sort(row_count_vector.begin(), row_count_vector.end(), 
+            [](const std::pair<long, int>& a, const std::pair<long, int>& b) {
+                return a.second > b.second; 
+            });
+        std::vector<std::pair<long, int>> col_count_vector(col_count.begin(), col_count.end());
+        std::sort(col_count_vector.begin(), col_count_vector.end(), 
+            [](const std::pair<long, int>& a, const std::pair<long, int>& b) {
+                return a.second > b.second; 
+            });
 
         std::vector<long> seeds;
-        int seed_limit = std::min((int)pop_rows.size(), r_first_rows);
-        for (int i = 0; i < seed_limit; i++) seeds.push_back(pop_rows[i].first);
+        int seed_limit = std::min((int)row_count_vector.size(), r_first_rows);
+        for (int i = 0; i < seed_limit; i++) {
+            seeds.push_back(row_count_vector[i].first);
+        }
 
-        // ---------------------------------------------------------
-        // 3. Setup Ring Buffers and State Tracking
-        // ---------------------------------------------------------
+        // 3. Setup Heuristic State Tracking (The Dictionaries)
         std::vector<bool> visited(local_nnz, false);
-        std::vector<bool> in_frontier(local_nnz, false);
+        std::vector<bool> in_frontier(local_nnz, false); // Prevents duplicate entries
         
-        std::vector<char> row_in_cache(this->m, 0);
-        std::vector<char> col_in_cache(this->n, 0);
-        std::vector<int> row_visited_count(this->m, 0);
-        std::vector<int> col_visited_count(this->n, 0);
-
-        std::vector<long> row_history(cache_capacity, -1);
-        std::vector<long> col_history(cache_capacity, -1);
-        int r_head = 0, c_head = 0;
+        std::unordered_map<long, long> row_freshness;     // For R(v) Recency
+        std::unordered_map<long, long> col_freshness;     // For R(v) Recency
+        std::unordered_map<long, int> row_visited_count;  // For N(v) Coverage
+        std::unordered_map<long, int> col_visited_count;  // For N(v) Coverage
 
         std::vector<long> reordered_j;
         reordered_j.reserve(local_nnz);
-        
+
         std::vector<long> frontier;
+        // Bounding the frontier size to represent our L1/L2 capacity proxy
         size_t MAX_FRONTIER_SIZE = (size_t)frontier_size; 
 
-        // ---------------------------------------------------------
-        // THE TIERED SCORER
-        // Returns a pair: {Tier [0-3], Coverage Score}
-        // ---------------------------------------------------------
-        auto compute_tier = [&](long j) -> std::pair<int, double> {
+        // Heuristic Weights
+        const double ALPHA = alpha; // Weight for Recency R(v)
+        const double BETA  = beta; // Weight for Coverage N(v)
+
+        long current_step = 1; // Start at 1 so uninitialized maps (0) are naturally "old"
+
+       // Lambda to compute: score(v) = a*R(v) + b*N(v)
+        auto compute_score = [&](long j) -> double {
             long r = row_ind[j];
             long c = col_ind[j];
 
-            bool r_hit = row_in_cache[r];
-            bool c_hit = col_in_cache[c];
+            // R(v): Recency (Linear decay based on how long ago it was seen)
+            double r_score = 0.0;
+            long r_age = current_step - row_freshness[r];
+            long c_age = current_step - col_freshness[c];
             
-            int tier = 0;
-            if (r_hit && c_hit) tier = 3;       // Golden
-            else if (r_hit) tier = 2;           // Silver (Row prioritize)
-            else if (c_hit) tier = 1;           // Bronze (Col prioritize)
-            else tier = 0;                      // Uncached
+            //-----------------------------------------------------------------//
+            // if (row_freshness[r] > 0 && r_age <= cache_capacity) {
+            //     r_score += 1.0 - ((double)r_age / cache_capacity); // Fixed division variable
+            // }
+            // if (col_freshness[c] > 0 && c_age <= cache_capacity) {
+            //     r_score += 1.0 - ((double)c_age / cache_capacity); // Fixed division variable
+            // }
+            //-----------------------------------------------------------------//
+             if (row_freshness[r] > 0 && r_age <= cache_capacity) {
+                r_score += 1.0;
+            }
+            if (col_freshness[c] > 0 && c_age <= cache_capacity) {
+                r_score += 1.0;
+            }
+            //-----------------------------------------------------------------//
 
+            // N(v): Neighborhood coverage (Fraction of row/col already visited)
             double n_score = 0.0;
-            if (row_count[r] > 0) n_score += (double)row_visited_count[r] / row_count[r];
-            if (col_count[c] > 0) n_score += (double)col_visited_count[c] / col_count[c];
+            if (!row_nnzs_set[r].empty()) {
+                n_score += (double)row_visited_count[r] / row_count[r];
+            }
+            if (!col_nnzs_set[c].empty()) {
+                n_score += (double)col_visited_count[c] / col_count[c];
+            }
 
-            return {tier, n_score};
+            return (ALPHA * r_score) + (BETA * n_score);
         };
 
         // ---------------------------------------------------------
-        // 4. Main Greedy / Stochastic Loop
+        // 4. Main Greedy Heuristic Loop
         // ---------------------------------------------------------
         while (reordered_j.size() < local_nnz) {
             long best_candidate = -1;
 
-            // Roll the 100-sided dice
-            int roulette = rand_r(&seed_rng) % 100;
-
-            // --- STRATEGY A: 70% Exploit the Tiers ---
-            if (roulette < 70 && !frontier.empty()) {
-                int highest_tier_found = -1;
-                double best_coverage_in_tier = -1.0;
-                long best_idx = -1;
-
-                // Scan frontier for the absolute best tier
-                for (size_t i = 0; i < frontier.size(); ) {
-                    // FIX: If Strategy B or C already processed this node, lazily delete it from the frontier!
-                    if (visited[frontier[i] - j_s]) {
-                        in_frontier[frontier[i] - j_s] = false;
-                        frontier[i] = frontier.back();
-                        frontier.pop_back();
-                        continue; // Do not increment i, we must evaluate the swapped element
-                    }
-
-                    auto [tier, coverage] = compute_tier(frontier[i]);
-                    
-                    if (tier > highest_tier_found) {
-                        highest_tier_found = tier;
-                        best_coverage_in_tier = coverage;
-                        best_idx = i;
-                        if (tier == 3) break; // Optimization: Found a Golden hit, take it immediately!
-                    } else if (tier == highest_tier_found && coverage > best_coverage_in_tier) {
-                        best_coverage_in_tier = coverage;
-                        best_idx = i;
-                    }
-                    i++;
+            // --- A & E COMBINED: Score, Sort, Pick, and Clamp ---
+            if (!frontier.empty()) {
+                std::vector<std::pair<double, long>> scored_frontier;
+                scored_frontier.reserve(frontier.size());
+                
+                // 1. Score everything once
+                for (long cand : frontier) {
+                    scored_frontier.push_back({compute_score(cand), cand});
                 }
 
-                if (best_idx != -1) {
-                    best_candidate = frontier[best_idx];
-                    frontier[best_idx] = frontier.back();
-                    frontier.pop_back();
-                    in_frontier[best_candidate - j_s] = false;
+                // 2. Sort descending by score
+                std::sort(scored_frontier.begin(), scored_frontier.end(), 
+                    [](const std::pair<double, long>& a, const std::pair<double, long>& b) {
+                        return a.first > b.first; 
+                    });
+
+                // 3. The absolute best candidate is right at the top
+                best_candidate = scored_frontier[0].second;
+                in_frontier[best_candidate - j_s] = false;
+
+                // 4. Rebuild the frontier, applying the MAX_FRONTIER_SIZE clamp natively
+                frontier.clear();
+                
+                // We start at i = 1 because i = 0 is our best_candidate.
+                // We keep up to MAX_FRONTIER_SIZE elements.
+                size_t keep_count = std::min(scored_frontier.size(), MAX_FRONTIER_SIZE + 1);
+                
+                for (size_t i = 1; i < keep_count; i++) {
+                    frontier.push_back(scored_frontier[i].second);
                 }
-            }
-            // --- STRATEGY B: 20% Seed Jump (or Fallback if Tiered failed) ---
-            if (best_candidate == -1 && roulette >= 70 && roulette < 90) {
+                
+                // 5. Un-flag the items that were evicted
+                for (size_t i = keep_count; i < scored_frontier.size(); i++) {
+                    in_frontier[scored_frontier[i].second - j_s] = false;
+                }
+            } 
+            
+            // --- B. Fallback if Frontier is empty ---
+            if (best_candidate == -1) {
                 bool found = false;
+                // Try seeds first
                 for (long seed_r : seeds) {
                     for (long cand_j : row_nnzs_set[seed_r]) {
                         if (!visited[cand_j - j_s]) {
@@ -354,26 +339,9 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
                     }
                     if (found) break;
                 }
-            }
-
-            // --- STRATEGY C: 10% Random Unvisited Leap (or absolute fallback) ---
-            if (best_candidate == -1) {
-                // To avoid an O(N) scan every time we want a random node, we just pick a random index
-                // and scan linearly from there until we hit an unvisited node.
-                long start_guess = j_s + (rand_r(&seed_rng) % local_nnz);
-                bool found = false;
-                
-                // Scan forward
-                for (long j = start_guess; j < j_e; j++) {
-                    if (!visited[j - j_s]) {
-                        best_candidate = j;
-                        found = true;
-                        break;
-                    }
-                }
-                // Wrap around and scan backward if needed
+                // Absolute fallback: linear scan
                 if (!found) {
-                    for (long j = start_guess - 1; j >= j_s; j--) {
+                    for (long j = j_s; j < j_e; j++) {
                         if (!visited[j - j_s]) {
                             best_candidate = j;
                             break;
@@ -382,39 +350,22 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
                 }
             }
 
-            // --- C. Commit the Element & UPDATE RING BUFFERS ---
+            // --- C. Commit the Element ---
             visited[best_candidate - j_s] = true;
             reordered_j.push_back(best_candidate);
             long best_r = row_ind[best_candidate];
             long best_c = col_ind[best_candidate];
 
-            #ifdef PRINT_STATISTICS
-                bool r_hit = row_in_cache[best_r];
-                bool c_hit = col_in_cache[best_c];
-                if (r_hit && c_hit) local_hit_both++;
-                else if (r_hit) local_hit_row_only++;
-                else if (c_hit) local_hit_col_only++;
-                else local_hit_none++;
-            #endif
-
+            // Update dictionaries
+            row_freshness[best_r] = current_step;
+            col_freshness[best_c] = current_step;
             row_visited_count[best_r]++;
             col_visited_count[best_c]++;
             
-            // Ring Buffer Row
-            long evict_r = row_history[r_head];
-            if (evict_r != -1) row_in_cache[evict_r] = 0; 
-            row_history[r_head] = best_r;                 
-            row_in_cache[best_r] = 1;                     
-            r_head = (r_head + 1) % cache_capacity;       
+            // --- D. Expand Frontier with Neighbors ---
+            // (We just throw them in; they will be scored and sorted at the start of the next loop!)
             
-            // Ring Buffer Col
-            long evict_c = col_history[c_head];
-            if (evict_c != -1) col_in_cache[evict_c] = 0; 
-            col_history[c_head] = best_c;                 
-            col_in_cache[best_c] = 1;                     
-            c_head = (c_head + 1) % cache_capacity;       
-
-            // --- D. Expand Frontier ---
+            // Add Row Neighbors
             for (long neighbor_j : row_nnzs_set[best_r]) {
                 long local_idx = neighbor_j - j_s;
                 if (!visited[local_idx] && !in_frontier[local_idx]) { 
@@ -422,6 +373,8 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
                     in_frontier[local_idx] = true;
                 }
             }
+            
+            // Add Col Neighbors
             for (long neighbor_j : col_nnzs_set[best_c]) {
                 long local_idx = neighbor_j - j_s;
                 if (!visited[local_idx] && !in_frontier[local_idx]) {
@@ -430,29 +383,11 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
                 }
             }
 
-            // --- E. Clamp the Frontier (Random Eviction!) ---
-            // Because our scheduler is stochastic, we don't need a perfectly sorted frontier anymore.
-            // If it gets too big, we just randomly evict down to MAX_FRONTIER_SIZE.
-            // This is O(1) per eviction, making the loop insanely fast.
-            while (frontier.size() > MAX_FRONTIER_SIZE) {
-                int drop_idx = rand_r(&seed_rng) % frontier.size();
-                long dropped_cand = frontier[drop_idx];
-                in_frontier[dropped_cand - j_s] = false;
-                
-                frontier[drop_idx] = frontier.back();
-                frontier.pop_back();
-            }
+            current_step++;
         }
 
-        #ifdef PRINT_STATISTICS
-            thread_hit_both[tnum] = local_hit_both;
-            thread_hit_row_only[tnum] = local_hit_row_only;
-            thread_hit_col_only[tnum] = local_hit_col_only;
-            thread_hit_none[tnum] = local_hit_none;
-        #endif
-
         // ---------------------------------------------------------
-        // 5. Apply the new ordering
+        // 5. Apply the new ordering to local arrays
         // ---------------------------------------------------------
         std::vector<INT_T> temp_row(local_nnz);
         std::vector<INT_T> temp_col(local_nnz);
@@ -477,7 +412,7 @@ void
 COOArrays::spmm(ValueType * x, ValueType * y, int k)
 {
     num_loops++;
-    #ifdef CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ROULETTE 
+    #ifdef CUSTOM_COO_VEC_FRONTIER 
     //     compute_coo_vector_xrow_perfect_nnz_balance(this, x, y, k);
     // #elif CUSTOM_COO_VEC_XROW_ATOMIC || CUSTOM_COO_VEC_XROW_ROW_SPLIT
         // printf("Running COO Vector Cross Kernel with %d threads...\n", omp_get_max_threads());
@@ -497,7 +432,7 @@ csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long
     struct COOArrays * coo = new COOArrays(row_ptr, col_ind, values, m, n, nnz, k);
     coo->mem_footprint = nnz * (sizeof(ValueType) + 2 * sizeof(INT_T));
     // printf("Running COO Vector Cross Kernel with %d threads...\n", omp_get_max_threads());
-    coo->format_name = (char *) "COO_Frontier_Ringbuffer_Roulette";
+    coo->format_name = (char *) "COO_Frontier";
     return coo;
 }
 

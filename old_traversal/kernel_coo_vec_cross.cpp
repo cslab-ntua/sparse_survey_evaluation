@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <omp.h>
 #include <vector>
 #include <algorithm>
@@ -44,11 +45,6 @@ INT_T * thread_j_e = NULL;
 
 ValueType * thread_v_e = NULL;
 
-long * thread_hit_both = NULL;
-long * thread_hit_row_only = NULL;
-long * thread_hit_col_only = NULL;;
-long * thread_hit_none = NULL;
-
 double * thread_time_compute, * thread_time_barrier;
 
 // 
@@ -71,18 +67,14 @@ struct COOArrays : Matrix_Format
     {
         int num_threads = omp_get_max_threads();
         double time_balance;
-        float alpha, beta;
-        int row_seed, cross_distance_limit, frontier_size, cache_capacity;
+        int row_seed, cross_distance_limit, cache_capacity;
 
         row_ind = (INT_T *) malloc(nnz * sizeof(*row_ind));
         col_ind = (INT_T *) malloc(nnz * sizeof(*col_ind));
         a = (ValueType *) malloc(nnz * sizeof(*a));
         row_seed= atoi(getenv("SEED_ROW"));
         cross_distance_limit = atoi(getenv("CROSS_DISTANCE_LIMIT"));
-        frontier_size = atoi(getenv("FRONTIER_SIZE"));
         cache_capacity = atoi(getenv("CACHE_CAPACITY"));
-        alpha = atof(getenv("ALPHA"));
-        beta = atof(getenv("BETA"));
 
         #pragma omp parallel for schedule(dynamic, 1024)
         for (long i = 0; i < m; i++) {
@@ -99,12 +91,7 @@ struct COOArrays : Matrix_Format
         thread_j_s = (INT_T *) malloc(num_threads * sizeof(*thread_j_s));
         thread_j_e = (INT_T *) malloc(num_threads * sizeof(*thread_j_e));
         thread_v_e = (ValueType *) malloc(num_threads * k * sizeof(*thread_v_e));
-
-        thread_hit_both = (long *) malloc(num_threads * sizeof(*thread_hit_both));
-        thread_hit_row_only = (long *) calloc(num_threads, sizeof(*thread_hit_row_only));
-        thread_hit_col_only = (long *) calloc(num_threads, sizeof(*thread_hit_col_only));
-        thread_hit_none = (long *) malloc(num_threads * sizeof(*thread_hit_none));
-
+        
         time_balance = time_it(1,
             _Pragma("omp parallel")
             {
@@ -112,7 +99,7 @@ struct COOArrays : Matrix_Format
                 int tnum = omp_get_thread_num();
                 loop_partitioner_balance_iterations(num_threads, tnum, 0, nnz, &thread_j_s[tnum], &thread_j_e[tnum]);
 
-                #ifdef CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ALL_SEED
+                #ifdef CUSTOM_COO_VEC_CROSS || CUSTOM_COO_VEC_XROW_ROW_SPLIT || CUSTOM_COO_VEC_XROW_COLIND0
                     if (tnum > 0 && thread_j_s[tnum] < nnz) {
                         while(thread_j_s[tnum] < nnz && row_ind[thread_j_s[tnum]] == row_ind[thread_j_s[tnum] - 1]) {
                             thread_j_s[tnum]++;
@@ -138,35 +125,28 @@ struct COOArrays : Matrix_Format
 
             }
         );
-        // printf("COO Vector Cross Preprocessing: Seed Rows=%d, Distance Limit=%d, Cache Capacity=%d, Alpha=%f, Beta=%f\n", row_seed, cross_distance_limit, cache_capacity, alpha, beta);
-        this->preprocess_frontier_ringbuffer(row_seed, cross_distance_limit, frontier_size, cache_capacity, alpha, beta);
+        // printf("COO Vector Cross Preprocessing: Seed Rows=%d, Distance Limit=%d, Cache Capacity=%d\n", row_seed, cross_distance_limit, cache_capacity);
+        this->preprocess_cross(row_seed, cross_distance_limit, cache_capacity);
+
+        // Diagnostic (added for the kernel_coo.cpp port check): hash of the final non-zero order, same as in kernel_coo.cpp.
+        if (getenv("COO_PRINT_ORDER_HASH") != NULL && atoi(getenv("COO_PRINT_ORDER_HASH"))) {
+            uint64_t h = 1469598103934665603ULL;
+            for (long j = 0; j < nnz; j++) {
+                h = (h ^ (uint32_t) row_ind[j]) * 1099511628211ULL;
+                h = (h ^ (uint32_t) col_ind[j]) * 1099511628211ULL;
+            }
+            printf("ORDER_HASH %016llx\n", (unsigned long long) h);
+        }
 
         #ifdef PRINT_STATISTICS
             long i;
             num_loops = 0;
             thread_time_barrier = (double *) malloc(num_threads * sizeof(*thread_time_barrier));
             thread_time_compute = (double *) malloc(num_threads * sizeof(*thread_time_compute));
-            
-            long total_both = 0, total_row = 0, total_col = 0, total_none = 0;
-
             for (i=0;i<num_threads;i++)
             {
-                // printf("Thread %ld: nnz range [%d, %d) nnz: %ld of nnz_total: %ld\n", i, thread_j_s[i], thread_j_e[i], thread_j_e[i] - thread_j_s[i], nnz);
-                // printf("          -> Hits (Both): %ld, (Row Only): %ld, (Col Only): %ld, (None): %ld\n", 
-                //        thread_hit_both[i], thread_hit_row_only[i], thread_hit_col_only[i], thread_hit_none[i]);
-                
-                total_both += thread_hit_both[i];
-                total_row += thread_hit_row_only[i];
-                total_col += thread_hit_col_only[i];
-                total_none += thread_hit_none[i];
+                printf("Thread %ld: nnz range [%d, %d) nnz: %ld of nnz_total: %ld\n", i, thread_j_s[i], thread_j_e[i], thread_j_e[i] - thread_j_s[i], nnz);
             }
-            printf("====================================================\n");
-            printf("TOTAL MATRIX CACHE STATS:\n");
-            printf("  Both:     %ld %f%%\n", total_both, (double)total_both / (double)nnz*100);
-            printf("  Row Only: %ld %f%%\n", total_row, (double)total_row / (double)nnz*100);
-            printf("  Col Only: %ld %f%%\n", total_col, (double)total_col / (double)nnz*100);
-            printf("  None:     %ld %f%%\n", total_none, (double)total_none / (double)nnz*100);
-            printf("====================================================\n");
         #endif
     }
 
@@ -177,19 +157,14 @@ struct COOArrays : Matrix_Format
         free(col_ind);
         free(thread_j_s);
         free(thread_j_e);
-        free(thread_v_e);
 
         #ifdef PRINT_STATISTICS
             free(thread_time_barrier);
             free(thread_time_compute);
-            free(thread_hit_both);
-            free(thread_hit_row_only);
-            free(thread_hit_col_only);
-            free(thread_hit_none);
         #endif
     }
 
-    void preprocess_frontier_ringbuffer(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta);
+    void preprocess_cross(int r_first_rows, int cross_distance_limit, int cache_capacity);
     void spmm(ValueType * x, ValueType * y, int k);
     void sddmm(ValueType * x, ValueType * y, ValueType * out, int k);
     void statistics_start();
@@ -201,7 +176,7 @@ void compute_coo_vector_xrow(COOArrays * restrict coo, ValueType * restrict x , 
 void compute_coo_vector_xrow_perfect_nnz_balance(COOArrays * restrict coo, ValueType * restrict x , ValueType * restrict y, int k);
 void compute_coo_sddmm(COOArrays * restrict coo, ValueType * restrict x, ValueType * restrict y, ValueType * restrict out, int k);
 
-void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_distance_limit, int frontier_size, int cache_capacity, float alpha, float beta) 
+void COOArrays::preprocess_cross(int r_first_rows, int cross_distance_limit, int cache_capacity) 
 {
     #pragma omp parallel
     {
@@ -210,227 +185,140 @@ void COOArrays::preprocess_frontier_ringbuffer(int r_first_rows, int cross_dista
         long j_e = thread_j_e[tnum];
         long local_nnz = j_e - j_s;
 
-        #ifdef PRINT_STATISTICS
-            long local_hit_both = 0;
-            long local_hit_row_only = 0;
-            long local_hit_col_only = 0;
-            long local_hit_none = 0;
-        #endif
-        // if (local_nnz <= 0) {
-        //     // printf("Thread %d has no work (nnz range [%ld, %ld))\n", tnum, j_s, j_e);
-        //     return;
-        // }
+        // if (local_nnz <= 0) return;
 
-        // ---------------------------------------------------------
-        // 1. Build local adjacency lists and degree counters
-        // ---------------------------------------------------------
-        std::unordered_map<long, std::vector<long>> row_nnzs_set;
-        std::unordered_map<long, std::vector<long>> col_nnzs_set;
-        std::vector<int> row_count(this->m, 0); 
-        std::vector<int> col_count(this->n, 0);
+        // 1. Build local adjacency lists (The "Cross" lookup)
+        std::unordered_map<long, std::vector<long>> row_to_nnzs;
+        std::unordered_map<long, std::vector<long>> col_to_nnzs;
+        std::unordered_map<long, int> row_pop_count;
 
         for (long j = j_s; j < j_e; j++) {
-            long r = row_ind[j];
-            long c = col_ind[j];
-            row_nnzs_set[r].push_back(j);
-            col_nnzs_set[c].push_back(j);
-            row_count[r]++;
-            col_count[c]++;
+            row_to_nnzs[row_ind[j]].push_back(j);
+            col_to_nnzs[col_ind[j]].push_back(j);
+            row_pop_count[row_ind[j]]++;
         }
 
-        // ---------------------------------------------------------
-        // 2. Find Seeds (Both Rows and Columns)
-        // ---------------------------------------------------------
-        std::vector<std::pair<long, int>> pop_rows;
-        for (long i = 0; i < this->m; i++) {
-            if (row_count[i] > 0) pop_rows.push_back({i, row_count[i]});
-        }
+        // 2. Find the 'r_first_rows' most populated rows (Seeds)
+        std::vector<std::pair<long, int>> pop_rows(row_pop_count.begin(), row_pop_count.end());
         std::sort(pop_rows.begin(), pop_rows.end(), 
-            [](const std::pair<long, int>& a, const std::pair<long, int>& b) { return a.second > b.second; });
+            [](const std::pair<long, int>& a, const std::pair<long, int>& b) {
+                return a.second > b.second; 
+            });
 
-        std::vector<std::pair<long, int>> pop_cols;
-        for (long i = 0; i < this->n; i++) {
-            if (col_count[i] > 0) pop_cols.push_back({i, col_count[i]});
+        std::vector<long> seeds;
+        int seed_limit = std::min((int)pop_rows.size(), r_first_rows);
+        for (int i = 0; i < seed_limit; i++) {
+            seeds.push_back(pop_rows[i].first);
         }
-        std::sort(pop_cols.begin(), pop_cols.end(), 
-            [](const std::pair<long, int>& a, const std::pair<long, int>& b) { return a.second > b.second; });
 
-        std::vector<long> seed_rows;
-        int seed_limit_r = std::min((int)pop_rows.size(), r_first_rows);
-        for (int i = 0; i < seed_limit_r; i++) seed_rows.push_back(pop_rows[i].first);
-
-        std::vector<long> seed_cols;
-        // Re-using r_first_rows for columns here, or you could pass c_first_cols as a separate env variable
-        int seed_limit_c = std::min((int)pop_cols.size(), r_first_rows); 
-        for (int i = 0; i < seed_limit_c; i++) seed_cols.push_back(pop_cols[i].first);
-
-        // ---------------------------------------------------------
-        // 3. Setup Heuristic State Tracking & Ring Buffers
-        // ---------------------------------------------------------
+        // 3. Setup state tracking
         std::vector<bool> visited(local_nnz, false);
-        std::vector<bool> in_frontier(local_nnz, false);
-        
-        std::vector<char> row_in_cache(this->m, 0);
-        std::vector<char> col_in_cache(this->n, 0);
-        std::vector<int> row_visited_count(this->m, 0);
-        std::vector<int> col_visited_count(this->n, 0);
-
-        std::vector<long> row_history(cache_capacity, -1);
-        std::vector<long> col_history(cache_capacity, -1);
-        int r_head = 0, c_head = 0;
-
+        std::unordered_map<long, long> row_last_seen;
+        std::unordered_map<long, long> col_last_seen;
         std::vector<long> reordered_j;
         reordered_j.reserve(local_nnz);
-        std::vector<long> frontier;
-        size_t MAX_FRONTIER_SIZE = (size_t)frontier_size; 
 
-        // --- NEW: Pre-fill the frontier with all seeds ---
-        for (long seed_r : seed_rows) {
-            for (long cand_j : row_nnzs_set[seed_r]) {
-                long local_idx = cand_j - j_s;
-                if (!in_frontier[local_idx]) {
-                    frontier.push_back(cand_j);
-                    in_frontier[local_idx] = true;
-                }
-            }
-        }
-        for (long seed_c : seed_cols) {
-            for (long cand_j : col_nnzs_set[seed_c]) {
-                long local_idx = cand_j - j_s;
-                if (!in_frontier[local_idx]) {
-                    frontier.push_back(cand_j);
-                    in_frontier[local_idx] = true;
-                }
-            }
-        }
+        long current_step = 0;
 
-        const double ALPHA = alpha;
-        const double BETA  = beta;
-
-        auto compute_score = [&](long j) -> double {
-            long r = row_ind[j];
-            long c = col_ind[j];
-
-            double r_score = (row_in_cache[r] ? 1.0 : 0.0) + (col_in_cache[c] ? 1.0 : 0.0);
-
-            double n_score = 0.0;
-            if (row_count[r] > 0) n_score += (double)row_visited_count[r] / row_count[r];
-            if (col_count[c] > 0) n_score += (double)col_visited_count[c] / col_count[c];
-
-            return (ALPHA * r_score) + (BETA * n_score);
+        // Helper lambda to check if an index is in our simulated cache
+        auto in_cache = [&](long r, long c) {
+            bool r_hit = (row_last_seen.count(r) && (current_step - row_last_seen[r] <= cache_capacity));
+            bool c_hit = (col_last_seen.count(c) && (current_step - col_last_seen[c] <= cache_capacity));
+            return std::make_pair(r_hit, c_hit);
         };
 
-        // ---------------------------------------------------------
-        // 4. Main Greedy Heuristic Loop
-        // ---------------------------------------------------------
+        // 4. Main Greedy Loop
+        long last_processed_j = -1;
+
         while (reordered_j.size() < local_nnz) {
             long best_candidate = -1;
+            long best_score = -1;
 
-            // --- A. Score, Sort, Pick, and Clamp ---
-            if (!frontier.empty()) {
-                std::vector<std::pair<double, long>> scored_frontier;
-                scored_frontier.reserve(frontier.size());
-                
-                for (long cand : frontier) {
-                    scored_frontier.push_back({compute_score(cand), cand});
+            // If we have a last processed element, search its cross
+            if (last_processed_j != -1) {
+                long current_r = row_ind[last_processed_j];
+                long current_c = col_ind[last_processed_j];
+
+                // Gather candidates from the Cross (bounded by cross_distance_limit)
+                std::vector<long> candidates;
+                int count = 0;
+                for (long neighbor_j : row_to_nnzs[current_r]) {
+                    if (!visited[neighbor_j - j_s] && count++ < cross_distance_limit) 
+                        candidates.push_back(neighbor_j);
+                }
+                count = 0;
+                for (long neighbor_j : col_to_nnzs[current_c]) {
+                    if (!visited[neighbor_j - j_s] && count++ < cross_distance_limit) 
+                        candidates.push_back(neighbor_j);
                 }
 
-                std::sort(scored_frontier.begin(), scored_frontier.end(), 
-                    [](const std::pair<double, long>& a, const std::pair<double, long>& b) {
-                        return a.first > b.first; 
-                    });
+  
+                for (long cand_j : candidates) {
+                    long cand_r = row_ind[cand_j];
+                    long cand_c = col_ind[cand_j];
+                    
+                    auto cache_status = in_cache(cand_r, cand_c);
+                    
+                    // Condition 1: Both row and col are already in cache
+                    if (cache_status.first && cache_status.second) {
+                        best_candidate = cand_j;
+                        break; 
+                    }
 
-                best_candidate = scored_frontier[0].second;
-                in_frontier[best_candidate - j_s] = false;
+                    // Condition 2: Score by intersection of candidate's cross with cache
+                    long score = 0;
+                    if (cache_status.first) score += 10; // Weight row hit
+                    if (cache_status.second) score += 10; // Weight col hit
+                    
+                    // Add secondary score based on neighbors in cache (simplified)
+                    score += row_to_nnzs[cand_r].size() + col_to_nnzs[cand_c].size();
 
-                frontier.clear();
-                size_t keep_count = std::min(scored_frontier.size(), MAX_FRONTIER_SIZE + 1);
-                
-                for (size_t i = 1; i < keep_count; i++) {
-                    frontier.push_back(scored_frontier[i].second);
-                }
-                
-                for (size_t i = keep_count; i < scored_frontier.size(); i++) {
-                    in_frontier[scored_frontier[i].second - j_s] = false;
-                }
-            } 
-            
-            // --- B. Simplified Fallback ---
-            // (If graph is perfectly connected, this never triggers. If disconnected, it finds the next unvisited chunk)
-            if (best_candidate == -1) {
-                for (long j = j_s; j < j_e; j++) {
-                    if (!visited[j - j_s]) {
-                        best_candidate = j;
-                        break;
+                    if (score > best_score) {
+                        best_score = score;
+                        best_candidate = cand_j;
                     }
                 }
             }
 
-            // --- C. Commit the Element & UPDATE RING BUFFERS ---
+            // Fallback: If cross search failed or we are just starting, use seeds or linear scan
+            if (best_candidate == -1) {
+                bool found = false;
+                // Try seeds first
+                for (long seed_r : seeds) {
+                    for (long cand_j : row_to_nnzs[seed_r]) {
+                        if (!visited[cand_j - j_s]) {
+                            best_candidate = cand_j;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+                
+                // Absolute fallback: first unvisited
+                if (!found) {
+                    for (long j = j_s; j < j_e; j++) {
+                        if (!visited[j - j_s]) {
+                            best_candidate = j;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Commit the selected element
             visited[best_candidate - j_s] = true;
             reordered_j.push_back(best_candidate);
-            long best_r = row_ind[best_candidate];
-            long best_c = col_ind[best_candidate];
-
-            #ifdef PRINT_STATISTICS
-            // Evaluate specific cache hits BEFORE modifying the ring buffers
-            bool r_hit = row_in_cache[best_r];
-            bool c_hit = col_in_cache[best_c];
-
-            if (r_hit && c_hit) {
-                local_hit_both++;
-            } else if (r_hit) {
-                local_hit_row_only++;
-            } else if (c_hit) {
-                local_hit_col_only++;
-            } else {
-                local_hit_none++;
-            }
-            #endif
-
-            row_visited_count[best_r]++;
-            col_visited_count[best_c]++;
             
-            // --> Ring Buffer Logic (Evict Old, Insert New) <--
-            long evict_r = row_history[r_head];
-            if (evict_r != -1) row_in_cache[evict_r] = 0; 
-            row_history[r_head] = best_r;                 
-            row_in_cache[best_r] = 1;                     
-            r_head = (r_head + 1) % cache_capacity;       
+            // Update cache state
+            row_last_seen[row_ind[best_candidate]] = current_step;
+            col_last_seen[col_ind[best_candidate]] = current_step;
             
-            long evict_c = col_history[c_head];
-            if (evict_c != -1) col_in_cache[evict_c] = 0; 
-            col_history[c_head] = best_c;                 
-            col_in_cache[best_c] = 1;                     
-            c_head = (c_head + 1) % cache_capacity;       
-
-            // --- D. Expand Frontier ---
-            for (long neighbor_j : row_nnzs_set[best_r]) {
-                long local_idx = neighbor_j - j_s;
-                if (!visited[local_idx] && !in_frontier[local_idx]) { 
-                    frontier.push_back(neighbor_j);
-                    in_frontier[local_idx] = true;
-                }
-            }
-            for (long neighbor_j : col_nnzs_set[best_c]) {
-                long local_idx = neighbor_j - j_s;
-                if (!visited[local_idx] && !in_frontier[local_idx]) {
-                    frontier.push_back(neighbor_j);
-                    in_frontier[local_idx] = true;
-                }
-            }
+            last_processed_j = best_candidate;
+            current_step++;
         }
-        #ifdef PRINT_STATISTICS
-            // Save local thread counters to global arrays before exiting
-            thread_hit_both[tnum] = local_hit_both;
-            thread_hit_row_only[tnum] = local_hit_row_only;
-            thread_hit_col_only[tnum] = local_hit_col_only;
-            thread_hit_none[tnum] = local_hit_none;
-        #endif
 
-        // ---------------------------------------------------------
-        // 5. Apply the new ordering
-        // ---------------------------------------------------------
+        // 5. Apply the new ordering to local arrays (in-place replacement)
         std::vector<INT_T> temp_row(local_nnz);
         std::vector<INT_T> temp_col(local_nnz);
         std::vector<ValueType> temp_a(local_nnz);
@@ -454,8 +342,7 @@ void
 COOArrays::spmm(ValueType * x, ValueType * y, int k)
 {
     num_loops++;
-    #ifdef CUSTOM_COO_VEC_FRONTIER_RINGBUFFER_ALL_SEED
-        // printf("Running COO Vector Cross Kernel with %d threads...\n", omp_get_max_threads());
+    #ifdef CUSTOM_COO_VEC_CROSS 
     //     compute_coo_vector_xrow_perfect_nnz_balance(this, x, y, k);
     // #elif CUSTOM_COO_VEC_XROW_ATOMIC || CUSTOM_COO_VEC_XROW_ROW_SPLIT
         // printf("Running COO Vector Cross Kernel with %d threads...\n", omp_get_max_threads());
@@ -475,7 +362,7 @@ csr_to_format(INT_T * row_ptr, INT_T * col_ind, ValueType * values, long m, long
     struct COOArrays * coo = new COOArrays(row_ptr, col_ind, values, m, n, nnz, k);
     coo->mem_footprint = nnz * (sizeof(ValueType) + 2 * sizeof(INT_T));
     // printf("Running COO Vector Cross Kernel with %d threads...\n", omp_get_max_threads());
-    coo->format_name = (char *) "COO_Frontier_Ringbuffer_all_seed";
+    coo->format_name = (char *) "COO_Cross";
     return coo;
 }
 
@@ -646,6 +533,11 @@ compute_coo_vector_xrow(COOArrays * restrict coo, ValueType * restrict x, ValueT
                 if (coo->row_ind[j] < start_row) start_row = coo->row_ind[j];
                 if (coo->row_ind[j] > end_row) end_row = coo->row_ind[j];
             }
+        }
+        else {
+            // No nnz assigned to this thread; make the zero-init loop below a no-op.
+            start_row = 0;
+            end_row = -1;
         }
         
         for (long i=start_row;i<=end_row;i++)

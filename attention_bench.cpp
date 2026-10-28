@@ -25,6 +25,9 @@ extern "C"{
 #define Max(x,y) ((x)>(y)?(x):(y))
 #define Abs(x) ((x)>(0)?(x):-(x))
 
+// Optional cache pollution between the timed iterations (CACHE_POLLUTE, CACHE_POLLUTE_MB, CACHE_POLLUTE_MODE).
+#include "cache_pollute.h"
+
 //
 // Reference (gold) computation for the fused sparse attention kernel: for every query row i,
 // runs a numerically-stable softmax restricted to the columns that are non-zero in the attention
@@ -297,13 +300,25 @@ int main(int argc, char **argv)
             for(int i=0; i<1000; i++)
                 MF->attention(Q, K, V, O, d);
 
+        // Optional cache pollution between the timed iterations (CPU kernels only).
+        long cache_pollute_mb = gpu_kernel ? 0 : cache_pollute_init();
+        if (cache_pollute_mb > 0)
+            printf("Cache pollution between iterations: %ld MB (%s)\n", cache_pollute_mb, cache_pollute_mode_name());
+
         time_compute = 0;
         iterations = 128;
         for(int i=0; i<iterations; i++){
+            if (cache_pollute_mb > 0) {     // not timed
+                cache_pollute();
+                cache_pollute_warm(Q, csr_m * d);
+                cache_pollute_warm(K, csr_n * d);
+                cache_pollute_warm(V, csr_n * d);
+            }
             time_compute += time_it(1,
                 MF->attention(Q, K, V, O, d);
             );
         }
+        cache_pollute_free();
         // FLOP model: per non-zero (query, key) pair, the fused kernel performs a d-dim dot product
         // for the score (2*d flops, mirroring SDDMM's 2*nnz*k) plus a d-dim rescale-and-accumulate of
         // the output row (2*d flops, mirroring SpMM's 2*nnz*k) -> 4*d flops per non-zero in total.

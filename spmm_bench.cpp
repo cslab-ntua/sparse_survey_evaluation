@@ -25,6 +25,9 @@ extern "C"{
 #define Max(x,y) ((x)>(y)?(x):(y))
 #define Abs(x) ((x)>(0)?(x):-(x))
 
+// Optional cache pollution between the timed iterations (CACHE_POLLUTE, CACHE_POLLUTE_MB, CACHE_POLLUTE_MODE).
+#include "cache_pollute.h"
+
 double CheckAccuracy(INT_T * row_ptr, INT_T * col_idx, ValueType * val, INT_T m, INT_T n, INT_T k, ValueType * x, ValueType * y)
 {
 	__attribute__((unused)) ValueType epsilon_relaxed = 1e-4;
@@ -55,7 +58,7 @@ double CheckAccuracy(INT_T * row_ptr, INT_T * col_idx, ValueType * val, INT_T m,
 				sum = 0;
 				for (j = row_ptr[i]; j < row_ptr[i + 1]; j++) {
 					// printf("x: %lf\n", x[c * n + col_idx[j]]);
-					value = val[j] * x[col_idx[j]*k +c] - compensation;
+					value = val[j] * x[(long) col_idx[j]*k +c] - compensation;   // long: col * k overflows int32 for large n * k
 					tmp = sum + value;
 					compensation = (tmp - sum) - value;
 					sum = tmp;
@@ -280,15 +283,33 @@ int main(int argc, char **argv)
 			for(int i=0; i<1000; i++)
 				MF->spmm(x, y, k);
 
+		// Optional cache pollution between the timed iterations (CPU kernels only).
+		long cache_pollute_mb = gpu_kernel ? 0 : cache_pollute_init();
+		if (cache_pollute_mb > 0)
+			printf("Cache pollution between iterations: %ld MB (%s)\n", cache_pollute_mb, cache_pollute_mode_name());
+
 		time_compute = 0;
 		iterations = 128;
 		for(int i=0; i<iterations; i++){
-			time_compute += time_it(1, 
+			if (cache_pollute_mb > 0) {     // not timed
+				cache_pollute();
+				cache_pollute_warm(x, csr_n * k);
+			}
+			time_compute += time_it(1,
 				MF->spmm(x, y, k);
 			);
 		}
+		cache_pollute_free();
 		double gflops = 2.0 * MF->nnz * k * iterations / time_compute / 1e9;
 		printf("SpMM kernel - matrix: %s (%ld rows, %ld cols, %ld nnz), read: %.4lf, coo_to_csr: %.4lf, format_conversion: %.4lf, format: %s, k: %d, system: %s, gflops: %.2lf\n", matrix_name, MF->m, MF->n, MF->nnz, time_read, time_coo_to_csr, time_convert_to_format, MF->format_name, k, system, gflops);
+
+		// Optional: check the result again after the timed iterations, to catch kernels that only give the right result on
+		// the first call (e.g. missing zero-initialization of y between calls).
+		const char * env_check_after = getenv("CHECK_ACCURACY_AFTER_TIMING");
+		if (env_check_after != NULL && atoi(env_check_after)) {
+			double check_acc_after = CheckAccuracy(csr_ia, csr_ja, csr_a, csr_m, csr_n, k, x, y);
+			printf("Accuracy after %ld timed iterations: max relative diff %g\n", iterations, check_acc_after);
+		}
 	}
 
 	free(x);
